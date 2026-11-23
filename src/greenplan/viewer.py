@@ -41,56 +41,100 @@ def find_latest_run_for_region(target_region: str, outputs_dir: Path) -> Optiona
     return None
 
 
-NON_TECH_NARRATIVES = {
-    "bhopal": {
-        "title": "Bhopal",
-        "badge": "State Capital",
-        "description": (
-            "<ul class='bullet-list'>"
-            "<li><strong>Landscape:</strong> State capital with natural cooling from Bada Talab (Upper Lake) and Van Vihar forest reserves.</li>"
-            "<li><strong>20-Year Trend:</strong> Built-up area expanded +4.01 km², balanced by protected green/blue belts.</li>"
-            "<li><strong>Thermal State:</strong> Moderate ground temperature (32.8 °C) due to natural evaporative cooling sinks.</li>"
-            "</ul>"
-        ),
-        "key_takeaway": "Lakes and contiguous forests act as natural shock absorbers against extreme urban heat.",
-    },
-    "kothri": {
-        "title": "Kothri / Ashta",
-        "badge": "College Campus & Farmland",
-        "description": (
-            "<ul class='bullet-list'>"
-            "<li><strong>Landscape:</strong> Agrarian corridor along Bhopal-Indore Highway housing the VIT Bhopal University campus with academic blocks, multi-storey hostels, and open sports grounds.</li>"
-            "<li><strong>20-Year Trend:</strong> Institutional campus construction clusters and highway corridor expansion, with surrounding area retaining &gt;80% fertile farmland.</li>"
-            "<li><strong>Thermal State:</strong> Coolest region in study (~27.6 °C) — vast agricultural transpiration keeps regional temperatures cushioned.</li>"
-            "</ul>"
-        ),
-        "key_takeaway": "Preserving unpaved soils and surrounding farmlands keeps campus microclimates significantly cooler.",
-    },
-    "sehore": {
-        "title": "Sehore",
-        "badge": "District Headquarters",
-        "description": (
-            "<ul class='bullet-list'>"
-            "<li><strong>Landscape:</strong> District center with historic mandi surrounded by fertile Malwa black-cotton plains.</li>"
-            "<li><strong>20-Year Trend:</strong> Compact core expansion (+2.08 km²), with farmland still covering &gt;70% of land.</li>"
-            "<li><strong>Thermal State:</strong> Moderate ground temperature (30.62 °C) buffered by open agricultural surroundings.</li>"
-            "</ul>"
-        ),
-        "key_takeaway": "Semi-urban district town where agricultural surroundings continue to cushion urban heat.",
-    },
-    "indore": {
-        "title": "Indore",
-        "badge": "Commercial Metropolis",
-        "description": (
-            "<ul class='bullet-list'>"
-            "<li><strong>Landscape:</strong> Commercial and industrial center with heavy building and arterial road density.</li>"
-            "<li><strong>20-Year Trend:</strong> Massive concrete sprawl (+8.16 km²) along Ring Road and Super Corridor.</li>"
-            "<li><strong>Thermal State:</strong> Severe Urban Heat Island (39.39 °C) caused by widespread replacement of soil with concrete.</li>"
-            "</ul>"
-        ),
-        "key_takeaway": "Unchecked concrete expansion without green corridors leads to severe urban heat stress.",
-    },
-}
+def generate_dynamic_narrative(summary: Dict, city_key: str) -> Dict:
+    """Generate dynamic plain-English findings directly from actual run summary data."""
+    built_growth = summary.get("builtup_growth_sqkm", 0.0)
+    green_loss = summary.get("net_green_loss_sqkm", 0.0)
+    lst_mean = summary.get("mean_lst_celsius_recent", 0.0)
+    green_recent = summary.get("green_cover_pct_recent", 0.0)
+    built_recent = summary.get("builtup_pct_recent", 0.0)
+    farm_recent = summary.get("farmland_pct_recent", 0.0)
+    data_source = summary.get("data_source", "empirical_satellite_data")
+    is_synth = "synthetic" in data_source
+
+    title = summary.get("study_area", city_key.capitalize())
+    badge = "Synthetic Calibration Run" if is_synth else "Verified Satellite Run"
+
+    desc = (
+        f"<ul class='bullet-list'>"
+        f"<li><strong>Landscape Composition:</strong> Built-up covers {built_recent:.1f}%, green space covers {green_recent:.1f}%, and farmland covers {farm_recent:.1f}%.</li>"
+        f"<li><strong>20-Year Dynamics:</strong> Net built-up expansion is {built_growth:+.2f} km², with net green space change of {-green_loss:+.2f} km².</li>"
+        f"<li><strong>Thermal Environment:</strong> Mean summer surface temperature is {lst_mean:.1f} °C.</li>"
+        f"<li><strong>Data Provenance:</strong> {data_source.replace('_', ' ').title()}.</li>"
+        f"</ul>"
+    )
+    takeaway = (
+        f"Regional surface temperature averages {lst_mean:.1f} °C with {built_recent:.1f}% impervious built-up fraction."
+    )
+    return {
+        "title": title,
+        "badge": badge,
+        "description": desc,
+        "key_takeaway": takeaway,
+    }
+
+
+def build_empty_region_payload(city_key: str, gee_client: GEEClient) -> Dict:
+    """Return placeholder payload when no pipeline run exists for this region."""
+    gee_scenes = gee_client.fetch_scene_metadata(city_key)
+    gee_status = gee_client.get_status()
+    orbit = gee_status["regional_orbits"].get(city_key, "Path 146 / Row 044")
+
+    scenes_rows = "".join(
+        f"<tr><td><strong>{yr}</strong></td><td><code>{sc['scene_id']}</code></td>"
+        f"<td>{sc['sensor']}</td><td>{sc['acquisition_date']}</td><td>{sc['cloud_cover']}%</td>"
+        f'<td><span class="badge" style="background:#64748b;">CATALOG READY</span></td></tr>'
+        for yr, sc in gee_scenes.items()
+    )
+
+    return {
+        "city_key": city_key,
+        "run_id": "NO_RUN_YET",
+        "study_area": city_key.capitalize(),
+        "has_run": False,
+        "summary": {
+            "study_area": city_key.capitalize(),
+            "builtup_pct_recent": 0.0,
+            "green_cover_pct_recent": 0.0,
+            "farmland_pct_recent": 0.0,
+            "mean_lst_celsius_recent": 0.0,
+            "net_green_loss_sqkm": 0.0,
+            "builtup_growth_sqkm": 0.0,
+            "data_source": "No run generated yet",
+        },
+        "narrative": {
+            "title": city_key.capitalize(),
+            "badge": "No Output Found",
+            "description": f"<p style='color:#e2e8f0;'>No pipeline run output found for {city_key.capitalize()}. Run <code>uv run greenplan run --city {city_key}</code> to execute analysis for this study area.</p>",
+            "key_takeaway": f"Run 'greenplan run --city {city_key}' to generate scientific results.",
+        },
+        "lulc_img": "",
+        "thermal_img": "",
+        "priority_img": "",
+        "overlay_2000": "",
+        "overlay_2020": "",
+        "overlay_thermal": "",
+        "overlay_expansion": "",
+        "overlay_priority": "",
+        "acc_html": f"<p>No run data found. Execute <code>uv run greenplan run --city {city_key}</code>.</p>",
+        "trans_html": f"<p>No transition data found.</p>",
+        "orbit": orbit,
+        "scenes_rows": scenes_rows,
+    }
+
+
+def run_dir_matches_region(r_key: str, run_dir: Path) -> bool:
+    """Check if the given run directory is for the specified region."""
+    summary_f = run_dir / "summary.json"
+    if summary_f.exists():
+        try:
+            with open(summary_f, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            area_name = str(data.get("study_area", "")).lower()
+            return r_key in area_name or (r_key == "kothri" and "ashta" in area_name)
+        except Exception:
+            return False
+    return False
 
 
 def build_region_payload(run_path: Path, city_key: str, gee_client: GEEClient) -> Dict:
@@ -129,14 +173,18 @@ def build_region_payload(run_path: Path, city_key: str, gee_client: GEEClient) -
     gee_status = gee_client.get_status()
     orbit = gee_status["regional_orbits"].get(city_key, "Path 146 / Row 044")
 
-    scenes_rows = "".join(
-        f"<tr><td><strong>{yr}</strong></td><td><code>{sc['scene_id']}</code></td>"
-        f"<td>{sc['sensor']}</td><td>{sc['acquisition_date']}</td><td>{sc['cloud_cover']}%</td>"
-        f'<td><span class="badge" style="background:#10b981;">CLEAR (CFMask &lt; 5%)</span></td></tr>'
-        for yr, sc in gee_scenes.items()
-    )
+    if isinstance(gee_scenes, dict):
+        scenes_rows = "".join(
+            f"<tr><td><strong>{yr}</strong></td><td><code>{sc.get('scene_id', sc)}</code></td>"
+            f"<td>{sc.get('sensor', 'Landsat')}</td><td>{sc.get('acquisition_date', '')}</td><td>{sc.get('cloud_cover', 0.0)}%</td>"
+            f'<td><span class="badge" style="background:#10b981;">CLEAR (CFMask &lt; 5%)</span></td></tr>'
+            for yr, sc in gee_scenes.items()
+            if isinstance(sc, dict)
+        )
+    else:
+        scenes_rows = ""
 
-    narrative = NON_TECH_NARRATIVES.get(city_key, NON_TECH_NARRATIVES["bhopal"])
+    narrative = generate_dynamic_narrative(summary, city_key)
 
     return {
         "city_key": city_key,
@@ -200,11 +248,12 @@ def generate_html_report(run_dir: Path) -> Path:
 
     for r_key in regions_list:
         found_dir = find_latest_run_for_region(r_key, outputs_dir)
-        target = found_dir if found_dir else run_dir
-        try:
-            regions_payload[r_key] = build_region_payload(target, r_key, gee_client)
-        except Exception:
+        if found_dir:
+            regions_payload[r_key] = build_region_payload(found_dir, r_key, gee_client)
+        elif run_dir_matches_region(r_key, run_dir):
             regions_payload[r_key] = build_region_payload(run_dir, r_key, gee_client)
+        else:
+            regions_payload[r_key] = build_empty_region_payload(r_key, gee_client)
 
     regions_json = json.dumps(regions_payload)
 
@@ -1933,39 +1982,9 @@ async function runGeePrediction(name, lat, lon, radius, presetKey) {{
     }}
 
     if (!result) {{
-        const dlat = radius / 111.0;
-        const dlon = radius / (111.0 * Math.max(0.1, Math.cos(lat * Math.PI / 180)));
-        const bounds = [
-            [parseFloat((lat - dlat).toFixed(4)), parseFloat((lon - dlon).toFixed(4))],
-            [parseFloat((lat + dlat).toFixed(4)), parseFloat((lon + dlon).toFixed(4))]
-        ];
-        const hashVal = Math.abs(name.split('').reduce((a, b) => {{ a = ((a << 5) - a) + b.charCodeAt(0); return a & a; }}, 0));
-        const built = parseFloat((12.0 + (hashVal % 25)).toFixed(1));
-        const canopy = parseFloat((20.0 + ((hashVal >> 3) % 45)).toFixed(1));
-        const water = parseFloat((0.5 + ((hashVal >> 5) % 4)).toFixed(1));
-        const farm = parseFloat(Math.max(5.0, 100.0 - built - canopy - water).toFixed(1));
-        const lst = parseFloat((30.0 + (built * 0.35)).toFixed(1));
-        const area = Math.PI * radius * radius;
-        const prio = parseFloat((built * 0.01 * area * 0.35).toFixed(2));
-
-        result = {{
-            name: name,
-            lat: lat,
-            lon: lon,
-            bounds: bounds,
-            scene_id: "LC08_L2SP_146044_20200420_02_T1",
-            sensor: "Landsat 8 OLI/TIRS",
-            date: "2020-04-20",
-            cloud: 0.2,
-            canopy: canopy,
-            built: built,
-            farm: farm,
-            water: water,
-            lst: lst,
-            priority_km2: prio,
-            recs: `High-resolution satellite analysis shows ${{built}}% built-up concrete cover with summer surface heat of ${{lst}}°C. Target 25% minimum canopy in new expansion zones and protect existing agrarian cooling corridors.`,
-            tiles: {{}}
-        }};
+        if (prog) prog.style.display = 'none';
+        alert(`Earth Engine live analysis is currently unauthenticated on the server.\\n\\nTo query live Landsat satellite imagery for "${{name}}", run 'earthengine authenticate' or provide EE_PROJECT_ID in your environment.`);
+        return;
     }}
 
     setTimeout(() => {{

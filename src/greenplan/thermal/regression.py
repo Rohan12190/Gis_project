@@ -3,6 +3,7 @@
 from typing import Dict, Tuple
 
 import numpy as np
+from scipy.signal import convolve2d
 import statsmodels.api as sm
 
 
@@ -79,8 +80,6 @@ def compute_morans_i_residuals(
     z = residuals - np.mean(residuals)
     s2 = np.sum(z**2)
 
-    # Compute k-nearest neighbor spatial weights for grid samples
-    # For regular grid sampling, standard adjacency is used
     from scipy.spatial import cKDTree
 
     tree = cKDTree(coords)
@@ -102,16 +101,45 @@ def compute_morans_i_residuals(
 def compute_getis_ord_hotspots(
     lst: np.ndarray, mask: np.ndarray, window_size: int = 5
 ) -> np.ndarray:
-    """Compute local Getis-Ord Gi* hotspot z-scores for surface temperature."""
-    from scipy.ndimage import uniform_filter
+    """Calculate Getis-Ord Gi* spatial hotspot z-scores (Getis & Ord 1992, 1995).
 
-    valid_lst = np.where(mask, lst, np.nan)
-    mean_val = np.nanmean(valid_lst)
-    std_val = np.nanstd(valid_lst)
-
-    if std_val == 0:
+    Formula:
+        Gi* = (sum_j w_ij * x_j - X_bar * W_i) / (S * sqrt((n * sum_j w_ij^2 - W_i^2) / (n - 1)))
+    where:
+        W_i = sum_j w_ij (local sum of weights)
+        X_bar = global mean over valid pixels
+        S = global standard deviation over valid pixels
+        n = total number of valid pixels
+    """
+    valid_vals = lst[mask]
+    n = len(valid_vals)
+    if n <= 1:
         return np.zeros_like(lst, dtype=np.float32)
 
-    local_sum = uniform_filter(np.nan_to_num(valid_lst, nan=mean_val), size=window_size)
-    z_score = (local_sum - mean_val) / (std_val / np.sqrt(window_size**2))
-    return np.where(mask, z_score, 0.0).astype(np.float32)
+    x_bar = float(np.mean(valid_vals))
+    s = float(np.std(valid_vals, ddof=1))
+
+    if s <= 1e-7:
+        return np.zeros_like(lst, dtype=np.float32)
+
+    kernel = np.ones((window_size, window_size), dtype=np.float32)
+
+    # Prepare masked input arrays for 2D convolution
+    x_grid = np.where(mask, lst, 0.0).astype(np.float32)
+    m_grid = mask.astype(np.float32)
+
+    # Local sum of values and weights (since w_ij in {0, 1}, sum w_ij^2 == sum w_ij == W_i)
+    local_sum = convolve2d(x_grid, kernel, mode="same", boundary="fill", fillvalue=0)
+    w_i = convolve2d(m_grid, kernel, mode="same", boundary="fill", fillvalue=0)
+
+    # Denominator variance component: (n * W_i - W_i^2) / (n - 1)
+    denom_var = (n * w_i - w_i**2) / (n - 1)
+    # Clip numerical precision near boundaries
+    denom_var = np.maximum(0.0, denom_var)
+    denom = s * np.sqrt(denom_var)
+
+    gi_star = np.zeros_like(lst, dtype=np.float32)
+    valid_denom = mask & (denom > 1e-7)
+    gi_star[valid_denom] = (local_sum[valid_denom] - x_bar * w_i[valid_denom]) / denom[valid_denom]
+
+    return gi_star

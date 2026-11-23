@@ -11,23 +11,21 @@ from greenplan.validation.metrics import (
 )
 
 
-def spatial_block_split(
+def spatial_block_kfold(
     coords: np.ndarray,
     n_blocks_x: int = 4,
     n_blocks_y: int = 4,
-    val_ratio: float = 0.25,
+    n_folds: int = 4,
     seed: int = 42,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Partition coordinates into spatial blocks to prevent spatial autocorrelation leakage.
+) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Partition coordinates into spatial blocks and group blocks into K cross-validation folds.
 
-    coords: (N, 2) array of (x, y) or (lon, lat).
-    Returns (train_indices, val_indices).
+    Prevents spatial autocorrelation leakage between training and validation sets.
     """
     rng = np.random.default_rng(seed)
     min_x, max_x = np.min(coords[:, 0]), np.max(coords[:, 0])
     min_y, max_y = np.min(coords[:, 1]), np.max(coords[:, 1])
 
-    # Assign each coordinate to a grid block (bx, by)
     step_x = (max_x - min_x) / n_blocks_x + 1e-9
     step_y = (max_y - min_y) / n_blocks_y + 1e-9
 
@@ -38,14 +36,17 @@ def spatial_block_split(
     unique_blocks = np.unique(block_id)
     rng.shuffle(unique_blocks)
 
-    n_val_blocks = max(1, int(round(len(unique_blocks) * val_ratio)))
-    val_blocks = set(unique_blocks[:n_val_blocks])
+    # Assign blocks evenly into folds
+    block_folds = np.array_split(unique_blocks, n_folds)
+    splits = []
 
-    val_mask = np.isin(block_id, list(val_blocks))
-    train_indices = np.flatnonzero(~val_mask)
-    val_indices = np.flatnonzero(val_mask)
+    for fold_blocks in block_folds:
+        val_mask = np.isin(block_id, fold_blocks)
+        train_idx = np.flatnonzero(~val_mask)
+        val_idx = np.flatnonzero(val_mask)
+        splits.append((train_idx, val_idx))
 
-    return train_indices, val_indices
+    return splits
 
 
 def train_and_evaluate_rf(
@@ -54,35 +55,63 @@ def train_and_evaluate_rf(
     coords: np.ndarray,
     feature_names: List[str],
     n_estimators: int = 100,
+    num_classes: int = 5,
     seed: int = 42,
 ) -> Dict:
-    """Train Random Forest classifier using frozen spatial block validation split."""
-    train_idx, val_idx = spatial_block_split(coords, seed=seed)
+    """Train Random Forest classifier with true spatial block cross-validation.
 
-    X_train, y_train = features[train_idx], labels[train_idx]
-    X_val, y_val = features[val_idx], labels[val_idx]
+    Parameters:
+        features: (N, p) feature matrix.
+        labels: (N,) class labels.
+        coords: (N, 2) spatial coordinates.
+        feature_names: List of p feature names.
+        n_estimators: Number of trees.
+        num_classes: Fixed number of classes in taxonomy (default 5, prevents absent-class failure).
+        seed: Random seed.
+    """
+    # 4-Fold Spatial Cross-Validation
+    folds = spatial_block_kfold(coords, n_folds=4, seed=seed)
+    fold_oa = []
+    fold_kappa = []
+    total_cm = np.zeros((num_classes, num_classes), dtype=np.int64)
 
-    rf = RandomForestClassifier(
+    for train_idx, val_idx in folds:
+        if len(train_idx) == 0 or len(val_idx) == 0:
+            continue
+        rf_fold = RandomForestClassifier(
+            n_estimators=n_estimators, max_features="sqrt", random_state=seed, n_jobs=-1
+        )
+        rf_fold.fit(features[train_idx], labels[train_idx])
+        preds = rf_fold.predict(features[val_idx])
+
+        cm_fold = compute_confusion_matrix(labels[val_idx], preds, num_classes=num_classes)
+        total_cm += cm_fold
+
+        res = evaluate_classification(cm_fold)
+        fold_oa.append(res["overall_accuracy"])
+        fold_kappa.append(res["kappa"])
+
+    # Final model fit on all data for spatial prediction
+    final_rf = RandomForestClassifier(
         n_estimators=n_estimators, max_features="sqrt", random_state=seed, n_jobs=-1
     )
-    rf.fit(X_train, y_train)
+    final_rf.fit(features, labels)
 
-    val_preds = rf.predict(X_val)
+    acc_report = evaluate_classification(total_cm)
+    acc_report["cv_overall_accuracy_mean"] = float(np.mean(fold_oa)) if fold_oa else 0.0
+    acc_report["cv_overall_accuracy_std"] = float(np.std(fold_oa)) if fold_oa else 0.0
+    acc_report["cv_kappa_mean"] = float(np.mean(fold_kappa)) if fold_kappa else 0.0
+    acc_report["cv_kappa_std"] = float(np.std(fold_kappa)) if fold_kappa else 0.0
 
-    num_classes = len(np.unique(labels))
-    cm = compute_confusion_matrix(y_val, val_preds, num_classes=num_classes)
-    acc_report = evaluate_classification(cm)
-
-    # Feature importances
-    importances = {name: float(imp) for name, imp in zip(feature_names, rf.feature_importances_)}
+    importances = {name: float(imp) for name, imp in zip(feature_names, final_rf.feature_importances_)}
 
     return {
-        "model": rf,
-        "confusion_matrix": cm,
+        "model": final_rf,
+        "confusion_matrix": total_cm,
         "metrics": acc_report,
         "feature_importances": importances,
-        "n_train": len(train_idx),
-        "n_val": len(val_idx),
+        "n_samples": len(labels),
+        "num_classes": num_classes,
     }
 
 

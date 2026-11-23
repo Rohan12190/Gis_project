@@ -26,7 +26,6 @@ gis = [
     "pyproj>=3.6.0",
     "rasterio>=1.3.0",
     "geopandas>=0.14.0",
-    "earthengine-api>=0.1.380",
 ]
 spatial = [
     "libpysal>=4.9.0",
@@ -51,7 +50,7 @@ packages = ["src/greenplan"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py311"
 exclude = ["legacy"]
 
 [tool.ruff.lint]

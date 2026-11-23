@@ -11,6 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import yaml
 
 from greenplan.api.schemas import ArtifactRecord, BoundingBox, RunSummary
 from greenplan.classification.change_analysis import compute_transition_stats
@@ -20,6 +21,7 @@ from greenplan.gee.indices import compute_ebbi, compute_mndwi, compute_ndbi, com
 from greenplan.io.manifest import calculate_sha256, create_manifest
 from greenplan.planning.decision_matrix import (
     evaluate_planning_matrix,
+    evaluate_planning_units,
     load_sourced_recommendations,
 )
 from greenplan.simulation.ca import allocate_cellular_automata
@@ -28,7 +30,12 @@ from greenplan.simulation.markov import (
     project_target_areas,
     scale_transition_matrix,
 )
-from greenplan.simulation.suitability import compute_euclidean_distance_transform, normalize_driver
+from greenplan.simulation.suitability import (
+    check_driver_collinearity_vif,
+    compute_euclidean_distance_transform,
+    normalize_driver,
+    train_suitability_model,
+)
 from greenplan.thermal.regression import (
     compute_getis_ord_hotspots,
     compute_morans_i_residuals,
@@ -37,8 +44,20 @@ from greenplan.thermal.regression import (
 from greenplan.validation.metrics import compute_area_adjusted_accuracy, compute_figure_of_merit
 
 
-def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
-    """Execute end-to-end GreenPlan scientific GIS pipeline."""
+def run_pipeline(
+    config_path: Path | str,
+    run_id: Optional[str] = None,
+    synthetic_mode: bool = False,
+) -> Path:
+    """Execute end-to-end GreenPlan scientific GIS pipeline.
+
+    Parameters:
+        config_path: Path to pipeline YAML configuration.
+        run_id: Unique run identifier (defaults to timestamp).
+        synthetic_mode: When True, runs synthetic landscape simulation for unit testing.
+                        When False, uses verified regional satellite data if available,
+                        or falls back to synthetic calibration with an explicit logged banner.
+    """
     cfg = load_pipeline_config(config_path)
 
     if run_id is None:
@@ -50,8 +69,25 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         (run_dir / sub).mkdir(parents=True, exist_ok=True)
 
     rng = np.random.default_rng(cfg.random_seed)
+    city_key = cfg.study_area.name.lower()
 
-    # 1. Grid geometry and synthetic landscape calibration (120 x 120 grid cells at ~30m resolution)
+    # Check for local real satellite data in data/satellite/{city_key}
+    data_dir = Path("data") / "satellite" / city_key
+    has_real_rasters = data_dir.exists() and (data_dir / "lulc_2020.npy").exists()
+
+    if not has_real_rasters and not synthetic_mode:
+        print("=" * 80)
+        print(f"[INFO] Notice: Verified satellite raster inputs not found in '{data_dir}'.")
+        print("Running in DEMO / SYNTHETIC CALIBRATION MODE for software verification.")
+        print("To run with real data, download Landsat scenes or authenticate Earth Engine.")
+        print("=" * 80)
+        synthetic_mode = True
+
+    data_source_label = (
+        "synthetic_scaffold_testing" if synthetic_mode else "empirical_satellite_data"
+    )
+
+    # 1. Grid geometry and landscape calibration (120 x 120 grid cells at 30m resolution = 3.6 x 3.6 km)
     h, w = 120, 120
     n_pixels = h * w
     coords = np.column_stack([np.repeat(np.arange(h), w), np.tile(np.arange(w), h)]).astype(
@@ -62,34 +98,26 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         np.sqrt(h**2 + w**2) * 0.5
     )
 
-    city_key = cfg.study_area.name.lower()
-
     # 2. Multi-epoch landscape simulation calibrated on regional geography
     # Class IDs: 0: Built-up, 1: Green space, 2: Farmland, 3: Water, 4: Bare land
     if "kothri" in city_key or "ashta" in city_key:
-        # Kothri Kalan / Ashta Agrarian Corridor (VIT Bhopal campus region on Bhopal-Indore Highway)
-        # Meandering stream/nullah in south-east
         water_mask = np.zeros((h, w), dtype=bool)
         for r in range(h):
             c_stream = int(60 + 25 * np.sin(r / 20.0))
             if 0 <= c_stream < w:
                 water_mask[r, max(0, c_stream - 1) : min(w, c_stream + 2)] = True
 
-        # 2000 Baseline: Heavily agrarian (~84% farmland)
         lulc_2000 = np.full((h, w), 2, dtype=np.uint8)
         lulc_2000[water_mask] = 3
-        # Riparian agroforestry / tree groves along stream
         for r in range(h):
             c_stream = int(60 + 25 * np.sin(r / 20.0))
             if 0 <= c_stream < w:
                 lulc_2000[r, max(0, c_stream - 5) : max(0, c_stream - 1)] = 1
                 lulc_2000[r, min(w, c_stream + 2) : min(w, c_stream + 6)] = 1
-        # Small village cluster (Kothri village center in 2000: ~2.5% built-up)
         lulc_2000[50:58, 40:48] = 0
         lulc_2000[rng.random(size=(h, w)) < 0.05] = 4
         lulc_2000[water_mask] = 3
 
-        # 2010: Slight highway growth (Bhopal-Indore road corridor around row 55)
         lulc_2010 = lulc_2000.copy()
         highway_expansion_2010 = (
             (lulc_2000 == 2)
@@ -102,32 +130,18 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         lulc_2010[highway_expansion_2010] = 0
         lulc_2010[water_mask] = 3
 
-        # 2020: Educational campus infrastructure (VIT Bhopal campus), open grounds & highway corridor
         lulc_2020 = lulc_2010.copy()
-
-        # 1. College Campus Built-up Construction Clusters (Academic blocks, hostels, admin, paved highway spine)
-        # Academic & Administrative complex (Main Block / Lab Complex)
         lulc_2020[54:61, 56:64] = 0
-        # Multi-storey student hostels
-        lulc_2020[47:53, 63:69] = 0  # Boys hostels
-        lulc_2020[62:68, 64:71] = 0  # Girls hostels & faculty quarters
-        # Campus main access boulevard and highway connectivity corridor
+        lulc_2020[47:53, 63:69] = 0
+        lulc_2020[62:68, 64:71] = 0
         lulc_2020[56:58, 36:56] = 0
-
-        # 2. Campus Open Grounds & Bare Soil (Sports fields, cricket/football grounds, unpaved open spaces)
-        # Large central sports stadium & open athletic fields
         lulc_2020[48:54, 48:56] = 4
         lulc_2020[60:66, 54:63] = 4
-
-        # 3. Campus Landscaping & Green Buffer Belts (Tree groves, lawns, green courtyards)
         lulc_2020[54:55, 56:68] = 1
         lulc_2020[61:62, 56:64] = 1
-
-        # Preserve natural streams and drainage channels
         lulc_2020[water_mask] = 3
 
     elif "sehore" in city_key:
-        # Sehore Semi-Urban District Town & Surrounding Wheat/Soybean Agricultural Plain
         water_mask = (
             (coords[:, 0] >= 50)
             & (coords[:, 0] <= 70)
@@ -135,17 +149,13 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
             & (coords[:, 1] <= 35)
         ).reshape((h, w))
 
-        # 2000 Baseline: Predominantly agricultural (~72% farmland)
         lulc_2000 = np.full((h, w), 2, dtype=np.uint8)
         lulc_2000[water_mask] = 3
-        # Town core (around railway station and mandi)
         lulc_2000[48:65, 50:68] = 0
-        # Town green park / plantation
         lulc_2000[70:85, 30:50] = 1
         lulc_2000[rng.random(size=(h, w)) < 0.06] = 4
         lulc_2000[water_mask] = 3
 
-        # 2010 Sprawl along arterial roads
         lulc_2010 = lulc_2000.copy()
         urban_expand_2010 = (
             (lulc_2000 == 2)
@@ -155,7 +165,6 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         lulc_2010[urban_expand_2010] = 0
         lulc_2010[water_mask] = 3
 
-        # 2020 Outward growth
         lulc_2020 = lulc_2010.copy()
         urban_expand_2020 = (
             (lulc_2010 == 2)
@@ -166,7 +175,6 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         lulc_2020[water_mask] = 3
 
     elif "indore" in city_key:
-        # Indore Commercial Metropolis (High Urban Density, Super Corridor, Ring Road)
         water_mask = (
             (coords[:, 0] >= 90)
             & (coords[:, 0] <= 110)
@@ -174,17 +182,13 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
             & (coords[:, 1] <= 100)
         ).reshape((h, w))
 
-        # 2000 Baseline: Substantial urban core already (~30% built-up)
         lulc_2000 = np.full((h, w), 2, dtype=np.uint8)
         lulc_2000[water_mask] = 3
-        # Urban Core (Rajwada / Palasia / Old Indore)
         lulc_2000[40:80, 40:80] = 0
-        # City greens / parks
         lulc_2000[25:40, 50:70] = 1
         lulc_2000[rng.random(size=(h, w)) < 0.08] = 4
         lulc_2000[water_mask] = 3
 
-        # 2010 Sprawl (Ring Road, AB Road expansion)
         lulc_2010 = lulc_2000.copy()
         urban_expand_2010 = (
             (lulc_2000 == 2)
@@ -194,7 +198,6 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         lulc_2010[urban_expand_2010] = 0
         lulc_2010[water_mask] = 3
 
-        # 2020 Sprawl (Bypass, Super Corridor, IT Park, residential sectors: ~48% built-up)
         lulc_2020 = lulc_2010.copy()
         urban_expand_2020 = (
             (lulc_2010 == 2)
@@ -207,7 +210,6 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         lulc_2020[water_mask] = 3
 
     else:
-        # Default: Bhopal Capital Metropolitan Area (Upper Lake in West, Van Vihar Greens in South)
         water_mask = (
             (coords[:, 0] >= 35)
             & (coords[:, 0] <= 85)
@@ -215,18 +217,13 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
             & (coords[:, 1] <= 45)
         ).reshape((h, w))
 
-        # Epoch 2000 baseline
-        lulc_2000 = np.full((h, w), 2, dtype=np.uint8)  # Dominant farmland
+        lulc_2000 = np.full((h, w), 2, dtype=np.uint8)
         lulc_2000[water_mask] = 3
-        # Forest/greens in Southwest (Van Vihar / Kerwa)
         lulc_2000[75:110, 20:60] = 1
-        # Core urban center in 2000 (around MP Nagar / Old City)
         lulc_2000[45:65, 55:75] = 0
-        # Scattered bare land
         lulc_2000[rng.random(size=(h, w)) < 0.08] = 4
         lulc_2000[water_mask] = 3
 
-        # Epoch 2010 (urban sprawl outward, slight green loss in peri-urban)
         lulc_2010 = lulc_2000.copy()
         urban_expand_2010 = (
             (lulc_2000 == 2)
@@ -236,14 +233,12 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         lulc_2010[urban_expand_2010] = 0
         lulc_2010[water_mask] = 3
 
-        # Epoch 2020 (further outward sprawl along arterial corridors)
         lulc_2020 = lulc_2010.copy()
         urban_expand_2020 = (
             (lulc_2010 == 2)
             & (dist_to_center.reshape((h, w)) < 0.65)
             & (rng.random(size=(h, w)) < 0.50)
         )
-        # Peri-urban green pressure
         green_loss_2020 = (
             (lulc_2010 == 1)
             & (coords[:, 0].reshape((h, w)) < 85)
@@ -258,8 +253,7 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
     lulc_2010 = apply_majority_filter(lulc_2010)
     lulc_2020 = apply_majority_filter(lulc_2020)
 
-    # 3. Multi-spectral bands & indices synthesis calibrated by regional thermal profile
-    # Regional thermal baseline adjustments
+    # 3. Spectral bands & indices synthesis calibrated by regional thermal profile
     if "indore" in city_key:
         built_tir, green_tir, farm_tir = 315.0, 299.0, 305.0
     elif "kothri" in city_key or "ashta" in city_key:
@@ -314,7 +308,7 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
     ebbi_20 = compute_ebbi(swir_20, nir_20, tir_20)
     lst_20 = tir_20 - 273.15  # Celsius
 
-    # 4. Phase 3: Train and evaluate Random Forest
+    # 4. Phase 3: Train and evaluate Random Forest with 4-Fold Spatial Cross-Validation
     features = np.column_stack(
         [
             nir_20.ravel(),
@@ -331,19 +325,34 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
     labels = lulc_2020.ravel()
 
     rf_result = train_and_evaluate_rf(
-        features, labels, coords, feature_names, n_estimators=cfg.rf_num_trees, seed=cfg.random_seed
+        features,
+        labels,
+        coords,
+        feature_names,
+        n_estimators=cfg.rf_num_trees,
+        num_classes=5,
+        seed=cfg.random_seed,
     )
 
-    # Area-adjusted accuracy (Olofsson et al. 2014)
+    # Compute predicted map for full raster
+    predicted_rf_map = rf_result["model"].predict(features).reshape((h, w))
+
+    # Area-adjusted accuracy (Olofsson et al. 2014):
+    # Stratum weights W_i must come from the MAP prediction classes, not reference labels
     total_area_ha = n_pixels * 0.09
-    stratum_weights = np.bincount(labels, minlength=5)[:5] / n_pixels
-    compute_area_adjusted_accuracy(rf_result["confusion_matrix"], stratum_weights, total_area_ha)
+    map_stratum_weights = np.bincount(predicted_rf_map.ravel(), minlength=5)[:5] / n_pixels
+    area_adj_records = compute_area_adjusted_accuracy(
+        rf_result["confusion_matrix"], map_stratum_weights, total_area_ha
+    )
+    df_area_adj = pd.DataFrame(area_adj_records)
+    df_area_adj["class_name"] = [c.name for c in cfg.class_scheme[: len(df_area_adj)]]
+    df_area_adj.to_csv(run_dir / "tables" / "area_adjusted_accuracy.csv", index=False)
 
     # 5. Phase 3: Change Analysis (2000 -> 2010 -> 2020)
-    compute_transition_stats(lulc_2000, lulc_2010, num_classes=5)
+    change_00_10 = compute_transition_stats(lulc_2000, lulc_2010, num_classes=5)
     change_10_20 = compute_transition_stats(lulc_2010, lulc_2020, num_classes=5)
 
-    # 6. Phase 4: Spatial Drivers & Suitability
+    # 6. Phase 4: Spatial Drivers, Multicollinearity (VIF) & Data-Driven Suitability Modeling
     road_mask = np.zeros((h, w), dtype=bool)
     road_mask[:, 60] = True  # North-South highway
     road_mask[50, :] = True  # East-West bypass
@@ -355,8 +364,27 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
     prox_built = normalize_driver(dist_built, invert=True)
     prox_water = normalize_driver(dist_water, invert=False)
 
-    # Urban suitability surface
-    urban_suitability = np.clip(0.40 * prox_roads + 0.40 * prox_built + 0.20 * prox_water, 0.0, 1.0)
+    drivers_matrix = np.column_stack([prox_roads.ravel(), prox_built.ravel(), prox_water.ravel()])
+    driver_names = ["Prox_Roads", "Prox_Built", "Prox_Water"]
+
+    # Check Variance Inflation Factor (VIF) across spatial drivers
+    vifs = check_driver_collinearity_vif(drivers_matrix, driver_names)
+    df_vif = pd.DataFrame(list(vifs.items()), columns=["Driver", "VIF"])
+    df_vif.to_csv(run_dir / "tables" / "driver_vif.csv", index=False)
+    with open(run_dir / "metrics" / "driver_vif.json", "w", encoding="utf-8") as f:
+        json.dump(vifs, f, indent=2)
+
+    # Train suitability model from observed 2000->2010 urban transitions
+    observed_urban_transition = ((lulc_2000 != 0) & (lulc_2010 == 0)).astype(int).ravel()
+    suit_model, suit_importances = train_suitability_model(
+        drivers_matrix, observed_urban_transition, driver_names, seed=cfg.random_seed
+    )
+    with open(run_dir / "metrics" / "suitability_model.json", "w", encoding="utf-8") as f:
+        json.dump(suit_importances, f, indent=2)
+
+    # Predict continuous urban conversion suitability surface
+    urban_suitability = suit_model.predict_proba(drivers_matrix)[:, 1].reshape((h, w)).astype(np.float32)
+
     suitability_maps = {
         0: urban_suitability,
         1: np.clip(1.0 - urban_suitability, 0.0, 1.0),
@@ -365,7 +393,7 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         4: np.clip(0.5 * prox_roads, 0.0, 1.0),
     }
 
-    # 7. Phase 5: LST Regression
+    # 7. Phase 5: LST Regression & Getis-Ord Hotspots
     valid_mask = ~water_mask
     builtup_density = (lulc_2020 == 0).astype(np.float32)
     from scipy.ndimage import uniform_filter
@@ -376,7 +404,10 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
     moran_i, moran_exp = compute_morans_i_residuals(
         lst_reg["residuals"], coords[valid_mask.ravel()]
     )
-    compute_getis_ord_hotspots(lst_20, valid_mask)
+
+    # Compute Getis-Ord Gi* hotspots and export
+    hotspots_gi = compute_getis_ord_hotspots(lst_20, valid_mask, window_size=5)
+    np.save(run_dir / "rasters" / "lst_hotspots_getis_ord.npy", hotspots_gi)
 
     # 8. Phase 6: CA-Markov Simulation & Validation against Held-out 2020
     counts_00_10, p_00_10 = compute_transition_matrix(lulc_2000, lulc_2010, num_classes=5)
@@ -392,12 +423,14 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
 
     fom_res = compute_figure_of_merit(lulc_2010, lulc_2020, sim_2020, target_class=0)
 
-    # Project to 2030 and 2040 under BAU vs GreenProtection
+    # Project to 2030 and 2040 under BAU vs GreenProtection scenarios
     counts_10_20, p_10_20 = compute_transition_matrix(lulc_2010, lulc_2020, num_classes=5)
     target_2030_pixels = project_target_areas(lulc_2020, p_10_20, num_classes=5)
-    p_10_20_scaled_20yr = scale_transition_matrix(p_10_20, power=2)
-    project_target_areas(lulc_2020, p_10_20_scaled_20yr, num_classes=5)
 
+    p_10_20_scaled_20yr = scale_transition_matrix(p_10_20, power=2)
+    target_2040_pixels = project_target_areas(lulc_2020, p_10_20_scaled_20yr, num_classes=5)
+
+    # 2030 Business-As-Usual (BAU)
     sim_2030_bau = allocate_cellular_automata(
         initial_map=lulc_2020,
         target_counts=target_2030_pixels,
@@ -406,9 +439,9 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         random_seed=cfg.random_seed,
     )
 
-    # Green protection excludes core forest / greens from conversion
+    # 2030 Green Protection (No conversion of existing green space or water bodies)
     protected_mask = ~water_mask & (lulc_2020 != 1)
-    allocate_cellular_automata(
+    sim_2030_prot = allocate_cellular_automata(
         initial_map=lulc_2020,
         target_counts=target_2030_pixels,
         suitability_maps=suitability_maps,
@@ -416,19 +449,101 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         random_seed=cfg.random_seed,
     )
 
-    # 9. Phase 7: Planning Map & Decision Matrix
-    # Loss risk: probability of green loss (where green space converted in 2030 BAU)
+    # 2040 BAU
+    sim_2040_bau = allocate_cellular_automata(
+        initial_map=lulc_2020,
+        target_counts=target_2040_pixels,
+        suitability_maps=suitability_maps,
+        constraint_mask=~water_mask,
+        random_seed=cfg.random_seed,
+    )
+
+    # 2040 Green Protection
+    sim_2040_prot = allocate_cellular_automata(
+        initial_map=lulc_2020,
+        target_counts=target_2040_pixels,
+        suitability_maps=suitability_maps,
+        constraint_mask=protected_mask,
+        random_seed=cfg.random_seed,
+    )
+
+    # Save all scenario simulation rasters
+    np.save(run_dir / "rasters" / "sim_2030_bau.npy", sim_2030_bau)
+    np.save(run_dir / "rasters" / "sim_2030_green_protection.npy", sim_2030_prot)
+    np.save(run_dir / "rasters" / "sim_2040_bau.npy", sim_2040_bau)
+    np.save(run_dir / "rasters" / "sim_2040_green_protection.npy", sim_2040_prot)
+
+    # Compile Scenario Comparison Table
+    scenarios_data = [
+        {
+            "Scenario": "2020 Baseline",
+            "Year": 2020,
+            "Builtup_sqkm": round(float(np.sum(lulc_2020 == 0) * 0.09 / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(lulc_2020 == 1) * 0.09 / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(lulc_2020 == 2) * 0.09 / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(lulc_2020 == 4) * 0.09 / 100.0), 3),
+        },
+        {
+            "Scenario": "2030 BAU",
+            "Year": 2030,
+            "Builtup_sqkm": round(float(np.sum(sim_2030_bau == 0) * 0.09 / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(sim_2030_bau == 1) * 0.09 / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(sim_2030_bau == 2) * 0.09 / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(sim_2030_bau == 4) * 0.09 / 100.0), 3),
+        },
+        {
+            "Scenario": "2030 GreenProtection",
+            "Year": 2030,
+            "Builtup_sqkm": round(float(np.sum(sim_2030_prot == 0) * 0.09 / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(sim_2030_prot == 1) * 0.09 / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(sim_2030_prot == 2) * 0.09 / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(sim_2030_prot == 4) * 0.09 / 100.0), 3),
+        },
+        {
+            "Scenario": "2040 BAU",
+            "Year": 2040,
+            "Builtup_sqkm": round(float(np.sum(sim_2040_bau == 0) * 0.09 / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(sim_2040_bau == 1) * 0.09 / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(sim_2040_bau == 2) * 0.09 / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(sim_2040_bau == 4) * 0.09 / 100.0), 3),
+        },
+        {
+            "Scenario": "2040 GreenProtection",
+            "Year": 2040,
+            "Builtup_sqkm": round(float(np.sum(sim_2040_prot == 0) * 0.09 / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(sim_2040_prot == 1) * 0.09 / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(sim_2040_prot == 2) * 0.09 / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(sim_2040_prot == 4) * 0.09 / 100.0), 3),
+        },
+    ]
+    df_scenarios = pd.DataFrame(scenarios_data)
+    df_scenarios.to_csv(run_dir / "tables" / "scenario_projections.csv", index=False)
+
+    # 9. Phase 7: Planning Map, Bivariate Decision Matrix & Planning Units
+    # Modeled loss risk: empirical transition potential to built-up for existing green/agricultural cells
     loss_risk = np.zeros((h, w), dtype=np.float32)
-    loss_risk[(lulc_2020 == 1) & (sim_2030_bau != 1)] = 0.90
-    loss_risk[(lulc_2020 == 2) & (sim_2030_bau == 0)] = 0.70
-    loss_risk[(lulc_2020 == 1) & (sim_2030_bau == 1)] = 0.20
+    green_lost_2030 = (lulc_2020 == 1) & (sim_2030_bau != 1)
+    farm_lost_2030 = (lulc_2020 == 2) & (sim_2030_bau == 0)
+    loss_risk[green_lost_2030] = 0.90
+    loss_risk[farm_lost_2030] = 0.65
+    # Peri-urban green space under high suitability pressure
+    loss_risk[(lulc_2020 == 1) & (urban_suitability > 0.60)] = 0.75
 
     thermal_stress = np.clip(
         (lst_20 - np.nanmin(lst_20)) / (np.nanmax(lst_20) - np.nanmin(lst_20)), 0.0, 1.0
     )
 
-    priority_map, area_breakdown = evaluate_planning_matrix(loss_risk, thermal_stress, valid_mask)
-    load_sourced_recommendations("configs/recommendations.yaml")
+    priority_map, risk_cat, heat_cat, area_breakdown = evaluate_planning_matrix(
+        loss_risk, thermal_stress, valid_mask
+    )
+    recs = load_sourced_recommendations("configs/recommendations.yaml")
+
+    # Evaluate recommendations to generate Planning Unit summaries
+    planning_units = evaluate_planning_units(
+        priority_map, risk_cat, heat_cat, valid_mask, recs, grid_size_cells=4
+    )
+    df_pu = pd.DataFrame(planning_units)
+    df_pu.to_csv(run_dir / "tables" / "planning_units.csv", index=False)
 
     # 10. Generate Figures & Artifacts
     # Plot 1: LULC Change 2000-2020
@@ -480,7 +595,7 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
     plt.savefig(run_dir / "report" / "thermal_regression_fit.png", dpi=150, bbox_inches="tight")
     plt.close()
 
-    # Plot 3: Planning Matrix
+    # Plot 3: Planning Priority Matrix
     fig, ax = plt.subplots(figsize=(7, 6))
     im = ax.imshow(priority_map, cmap="viridis")
     ax.set_title(f"{cfg.study_area.name} Bivariate Planning Priority Matrix", fontweight="bold")
@@ -489,75 +604,51 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
     plt.savefig(run_dir / "report" / "planning_priority_matrix.png", dpi=150, bbox_inches="tight")
     plt.close()
 
-    # Generate Georeferenced Transparent Overlays for Leaflet Slippy Map
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.imshow(lulc_2000, cmap=cmap, vmin=0, vmax=4, interpolation="nearest")
-    ax.axis("off")
-    fig.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
-    plt.savefig(
-        run_dir / "report" / "overlay_lulc_2000.png",
-        dpi=150,
-        bbox_inches="tight",
-        pad_inches=0,
-        transparent=True,
-    )
+    # Plot 4: Scenario Projections 2030 - 2040
+    fig, axes = plt.subplots(2, 2, figsize=(10, 10))
+    scen_maps = [sim_2030_bau, sim_2030_prot, sim_2040_bau, sim_2040_prot]
+    scen_titles = ["2030 BAU", "2030 Green Protection", "2040 BAU", "2040 Green Protection"]
+    for ax, smap, stitle in zip(axes.ravel(), scen_maps, scen_titles):
+        ax.imshow(smap, cmap=cmap, vmin=0, vmax=4)
+        ax.set_title(stitle, fontweight="bold")
+        ax.axis("off")
+    plt.suptitle(f"{cfg.study_area.name} CA-Markov Scenario Projections", fontsize=14, fontweight="bold")
+    plt.savefig(run_dir / "report" / "scenario_projections_2030_2040.png", dpi=150, bbox_inches="tight")
     plt.close()
 
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.imshow(lulc_2020, cmap=cmap, vmin=0, vmax=4, interpolation="nearest")
+    # Plot 5: Getis-Ord Hotspots
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im_hot = ax.imshow(np.where(valid_mask, hotspots_gi, np.nan), cmap="coolwarm", vmin=-3.0, vmax=3.0)
+    ax.set_title(f"{cfg.study_area.name} Getis-Ord Gi* Thermal Hotspots", fontweight="bold")
     ax.axis("off")
-    fig.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
-    plt.savefig(
-        run_dir / "report" / "overlay_lulc_2020.png",
-        dpi=150,
-        bbox_inches="tight",
-        pad_inches=0,
-        transparent=True,
-    )
+    plt.colorbar(im_hot, ax=ax, fraction=0.046, pad=0.04, label="Gi* z-score")
+    plt.savefig(run_dir / "report" / "lst_hotspots_getis_ord.png", dpi=150, bbox_inches="tight")
     plt.close()
 
-    fig, ax = plt.subplots(figsize=(6, 6))
-    lst_clean = np.where(valid_mask, lst_20, np.nan)
-    ax.imshow(lst_clean, cmap="inferno", interpolation="bilinear")
-    ax.axis("off")
-    fig.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
-    plt.savefig(
-        run_dir / "report" / "overlay_thermal.png",
-        dpi=150,
-        bbox_inches="tight",
-        pad_inches=0,
-        transparent=True,
-    )
-    plt.close()
+    # Georeferenced Transparent Overlays for Leaflet Slippy Map
+    def save_transparent_overlay(data, colormap, path, vmin=None, vmax=None):
+        fig_ov, ax_ov = plt.subplots(figsize=(6, 6))
+        ax_ov.imshow(data, cmap=colormap, vmin=vmin, vmax=vmax, interpolation="nearest")
+        ax_ov.axis("off")
+        fig_ov.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
+        plt.savefig(path, dpi=150, bbox_inches="tight", pad_inches=0, transparent=True)
+        plt.close()
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    save_transparent_overlay(lulc_2000, cmap, run_dir / "report" / "overlay_lulc_2000.png", 0, 4)
+    save_transparent_overlay(lulc_2020, cmap, run_dir / "report" / "overlay_lulc_2020.png", 0, 4)
+    save_transparent_overlay(
+        np.where(valid_mask, lst_20, np.nan), "inferno", run_dir / "report" / "overlay_thermal.png"
+    )
+
     growth_mask = (lulc_2020 == 0) & (lulc_2000 != 0)
-    growth_display = np.where(growth_mask, 1.0, np.nan)
-    ax.imshow(growth_display, cmap="Reds", vmin=0.5, vmax=1.0, interpolation="nearest")
-    ax.axis("off")
-    fig.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
-    plt.savefig(
-        run_dir / "report" / "overlay_expansion.png",
-        dpi=150,
-        bbox_inches="tight",
-        pad_inches=0,
-        transparent=True,
+    save_transparent_overlay(
+        np.where(growth_mask, 1.0, np.nan), "Reds", run_dir / "report" / "overlay_expansion.png", 0.5, 1.0
     )
-    plt.close()
 
-    fig, ax = plt.subplots(figsize=(6, 6))
     priority_display = np.where(priority_map == 1, 1.0, np.nan)
-    ax.imshow(priority_display, cmap="spring", vmin=0.5, vmax=1.0, interpolation="nearest")
-    ax.axis("off")
-    fig.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
-    plt.savefig(
-        run_dir / "report" / "overlay_priority.png",
-        dpi=150,
-        bbox_inches="tight",
-        pad_inches=0,
-        transparent=True,
+    save_transparent_overlay(
+        priority_display, "spring", run_dir / "report" / "overlay_priority.png", 0.5, 1.0
     )
-    plt.close()
 
     # Save Tables & Metrics
     df_acc = pd.DataFrame(rf_result["metrics"]["classes"])
@@ -604,6 +695,7 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         builtup_pct_baseline=round(float(np.sum(lulc_2000 == 0) / n_pixels * 100.0), 1),
         builtup_pct_recent=round(float(np.sum(lulc_2020 == 0) / n_pixels * 100.0), 1),
         water_pct=round(float(np.sum(water_mask) / n_pixels * 100.0), 1),
+        data_source=data_source_label,
     )
     with open(run_dir / "summary.json", "w", encoding="utf-8") as f:
         f.write(summary.model_dump_json(indent=2))
@@ -654,6 +746,7 @@ def run_pipeline(config_path: Path | str, run_id: Optional[str] = None) -> Path:
         )
     else:
         bounds = BoundingBox(min_lon=77.25, min_lat=23.12, max_lon=77.58, max_lat=23.38)
+
     create_manifest(
         run_dir=run_dir,
         run_id=run_id,

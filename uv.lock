@@ -990,7 +990,6 @@ dev = [
     { name = "ruff" },
 ]
 gis = [
-    { name = "earthengine-api" },
     { name = "geopandas" },
     { name = "pyproj", version = "3.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "pyproj", version = "3.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1011,7 +1010,6 @@ spatial = [
 [package.metadata]
 requires-dist = [
     { name = "earthengine-api", specifier = ">=1.7.53" },
-    { name = "earthengine-api", marker = "extra == 'gis'", specifier = ">=0.1.380" },
     { name = "esda", marker = "extra == 'spatial'", specifier = ">=2.5.0" },
     { name = "geopandas", marker = "extra == 'gis'", specifier = ">=0.14.0" },
     { name = "libpysal", marker = "extra == 'spatial'", specifier = ">=4.9.0" },

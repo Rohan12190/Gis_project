@@ -24,39 +24,81 @@ def validate_config(
 
 
 @app.command()
-def imagery(config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML")):
+def imagery(
+    config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML"),
+    synthetic: bool = typer.Option(True, help="Run in synthetic calibration mode"),
+):
     """Phase 2: Prepare multi-epoch imagery composites & indices."""
+    from greenplan.pipeline import run_pipeline
+
     typer.echo("Executing Phase 2: Landsat imagery compositing & index calculation...")
+    run_dir = run_pipeline(config, synthetic_mode=synthetic)
+    typer.echo(f"Phase 2 imagery products generated in {run_dir / 'report'}")
 
 
 @app.command()
-def classify(config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML")):
+def classify(
+    config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML"),
+    synthetic: bool = typer.Option(True, help="Run in synthetic calibration mode"),
+):
     """Phase 3: Random Forest multi-epoch LULC classification & validation."""
-    typer.echo("Executing Phase 3: Random Forest classification...")
+    from greenplan.pipeline import run_pipeline
+
+    typer.echo("Executing Phase 3: Random Forest classification with spatial CV...")
+    run_dir = run_pipeline(config, synthetic_mode=synthetic)
+    typer.echo(f"Phase 3 accuracy & transition tables generated in {run_dir / 'tables'}")
 
 
 @app.command()
-def drivers(config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML")):
+def drivers(
+    config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML"),
+    synthetic: bool = typer.Option(True, help="Run in synthetic calibration mode"),
+):
     """Phase 4: Spatial driver extraction and suitability modeling."""
-    typer.echo("Executing Phase 4: Driver layers and suitability modeling...")
+    from greenplan.pipeline import run_pipeline
+
+    typer.echo("Executing Phase 4: Driver layers, VIF check, and suitability modeling...")
+    run_dir = run_pipeline(config, synthetic_mode=synthetic)
+    typer.echo(f"Phase 4 driver VIF metrics written to {run_dir / 'tables' / 'driver_vif.csv'}")
 
 
 @app.command()
-def thermal(config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML")):
+def thermal(
+    config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML"),
+    synthetic: bool = typer.Option(True, help="Run in synthetic calibration mode"),
+):
     """Phase 5: Land Surface Temperature regression and spatial diagnostics."""
-    typer.echo("Executing Phase 5: LST regression and hotspot modeling...")
+    from greenplan.pipeline import run_pipeline
+
+    typer.echo("Executing Phase 5: LST regression and Getis-Ord Gi* hotspot modeling...")
+    run_dir = run_pipeline(config, synthetic_mode=synthetic)
+    typer.echo(f"Phase 5 thermal diagnostics written to {run_dir / 'metrics' / 'thermal.json'}")
 
 
 @app.command()
-def simulate(config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML")):
+def simulate(
+    config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML"),
+    synthetic: bool = typer.Option(True, help="Run in synthetic calibration mode"),
+):
     """Phase 6: CA-Markov urban growth simulation and scenario comparison."""
-    typer.echo("Executing Phase 6: CA-Markov simulation...")
+    from greenplan.pipeline import run_pipeline
+
+    typer.echo("Executing Phase 6: CA-Markov 2030/2040 simulation & scenario comparison...")
+    run_dir = run_pipeline(config, synthetic_mode=synthetic)
+    typer.echo(f"Phase 6 scenario tables written to {run_dir / 'tables' / 'scenario_projections.csv'}")
 
 
 @app.command()
-def plan(config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML")):
+def plan(
+    config: Path = typer.Option("configs/pipeline.yaml", help="Path to config YAML"),
+    synthetic: bool = typer.Option(True, help="Run in synthetic calibration mode"),
+):
     """Phase 7: Bivariate risk/heat planning map and recommendation matrix."""
+    from greenplan.pipeline import run_pipeline
+
     typer.echo("Executing Phase 7: Generating planning map & decision matrix...")
+    run_dir = run_pipeline(config, synthetic_mode=synthetic)
+    typer.echo(f"Phase 7 planning units written to {run_dir / 'tables' / 'planning_units.csv'}")
 
 
 @app.command()
@@ -98,28 +140,27 @@ def serve(
             parsed = urlparse(self.path)
             if parsed.path == "/api/predict_gee":
                 query = parse_qs(parsed.query)
-                lat = float(query.get("lat", [23.18])[0])
-                lon = float(query.get("lon", [75.77])[0])
-                city = query.get("city", ["Target Area"])[0]
-                radius = float(query.get("radius", [8.0])[0])
-                year = int(query.get("year", [2020])[0])
+                city = query.get("city", ["Indore"])[0]
+                lat = float(query.get("lat", [22.7196])[0])
+                lon = float(query.get("lon", [75.8577])[0])
+                radius = float(query.get("radius", [7.0])[0])
 
                 from greenplan.gee.landsat import predict_location_gee
 
-                result = predict_location_gee(
-                    lat=lat, lon=lon, city_name=city, buffer_km=radius, year=year
-                )
-                payload = json.dumps(result).encode("utf-8")
+                result = predict_location_gee(lat, lon, city, buffer_km=radius)
+                response_bytes = json.dumps(result).encode("utf-8")
+
                 self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Content-Length", str(len(response_bytes)))
                 self.end_headers()
-                self.wfile.write(payload)
+                self.wfile.write(response_bytes)
                 return
 
-            super().do_GET()
+            super().do_GET(self)
 
+    socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", port), GreenPlanRequestHandler) as httpd:
         try:
             httpd.serve_forever()
@@ -128,111 +169,35 @@ def serve(
 
 
 @app.command()
-def gee_predict(
-    city: str = typer.Option("Ujjain", help="Name of target city / location"),
-    lat: float = typer.Option(23.18, help="Latitude"),
-    lon: float = typer.Option(75.77, help="Longitude"),
-    radius: float = typer.Option(8.0, help="Buffer radius in km"),
-    year: int = typer.Option(2020, help="Landsat epoch year"),
-):
-    """Stream live Landsat satellite imagery from Google Earth Engine and run ML prediction for ANY place."""
-    from greenplan.gee.landsat import predict_location_gee
-
-    typer.echo(f"Connecting to Google Earth Engine for {city} [{lat}, {lon}]...")
-    res = predict_location_gee(lat=lat, lon=lon, city_name=city, buffer_km=radius, year=year)
-    typer.echo("==================================================")
-    typer.echo(f"Earth Engine Live ML Prediction: {city.upper()}")
-    typer.echo("==================================================")
-    typer.echo(f"Satellite Scene : {res['scene_id']} ({res['sensor']})")
-    typer.echo(f"Acquisition Date: {res['acquisition_date']} (Cloud: {res['cloud_cover']}%)")
-    typer.echo(f"Green Canopy    : {res['green_cover_pct']}%")
-    typer.echo(f"Built-up Concrete: {res['builtup_pct']}%")
-    typer.echo(f"Farmland Area   : {res['farmland_pct']}%")
-    typer.echo(f"Surface Temp LST: {res['mean_lst_celsius']} °C")
-    typer.echo(f"Priority Deficit: {res['priority_planting_sqkm']} km²")
-    typer.echo(f"Recommendation  : {res['recommendation']}")
-    typer.echo("==================================================")
-
-
-@app.command()
-def gee_auth(
-    login: bool = typer.Option(
-        False, "--login", help="Launch OAuth2 browser authentication with your Google account"
+def verify_gee(
+    project_id: Optional[str] = typer.Option(
+        None, help="Google Cloud project ID with Earth Engine API enabled"
     ),
+    aoi: str = typer.Option("bhopal", help="AOI name: bhopal, sehore, kothri, indore"),
 ):
-    """Instructions, status check, and browser OAuth2 login for Google Earth Engine."""
+    """Verify Google Earth Engine connection, credentials, and catalog access."""
     from greenplan.gee.landsat import GEEClient
 
-    client = GEEClient()
-    if login:
-        import ee
-
-        typer.echo(
-            f"Launching Google Earth Engine browser authentication for project: {client.project_id}..."
-        )
-        ee.Authenticate(auth_mode="localhost")
-        try:
-            ee.Initialize(project=client.project_id)
-            typer.echo(
-                f"Successfully authenticated and initialized Earth Engine with project: {client.project_id}!"
-            )
-        except Exception as e:
-            typer.echo(f"Authentication token saved. Note on initialization: {e}")
-
-    st = client.get_status()
-    typer.echo("==================================================")
-    typer.echo("Google Earth Engine Environment Configuration (.env)")
-    typer.echo("==================================================")
-    typer.echo(f"Active Project ID : {st['project_id']}")
-    typer.echo(f"Auth Credential   : {st['auth_mode']}")
-    typer.echo(f"Cloud Endpoint    : {st['endpoint_url']}")
-    typer.echo("--------------------------------------------------")
-    typer.echo("How to configure your custom credentials:")
-    typer.echo("1. Edit '.env' in this repository.")
-    typer.echo(f"   EE_PROJECT_ID={st['project_id']}")
-    typer.echo("2. To authenticate with your Google/Gmail account, run:")
-    typer.echo("   uv run greenplan gee-auth --login")
-    typer.echo("   or: uv run earthengine authenticate")
-    typer.echo("==================================================")
-
-
-@app.command()
-def gee_fetch(
-    city: str = typer.Option(
-        "bhopal", help="Target city / region (bhopal, sehore, kothri, indore)"
-    ),
-    project_id: Optional[str] = typer.Option(None, help="Google Earth Engine Cloud Project ID"),
-    api_key: Optional[str] = typer.Option(None, help="GEE API Key or OAuth2 Bearer Token"),
-):
-    """Query and verify Google Earth Engine (GEE) Landsat data ingestion route."""
-    from greenplan.gee.landsat import GEEClient
-
-    client = GEEClient(project_id=project_id, api_key=api_key)
+    client = GEEClient(project_id=project_id)
     status = client.get_status()
-    typer.echo("==================================================")
-    typer.echo("Google Earth Engine (GEE) Ingestion Route & Status")
-    typer.echo("==================================================")
-    typer.echo(f"Endpoint URL  : {status['endpoint_url']}")
-    typer.echo(f"Project ID    : {status['project_id']}")
-    typer.echo(f"API Key       : {status['api_key']}")
-    typer.echo(f"Cloud Status  : {status['status']}")
-    typer.echo(f"Target City   : {city.capitalize()}")
-    typer.echo(
-        f"WRS-2 Orbit   : {status['regional_orbits'].get(city.lower(), 'Path 146 / Row 044')}"
-    )
-    typer.echo("Active Collections:")
-    for c in status["collections"]:
-        typer.echo(f"  - {c}")
-    typer.echo("--------------------------------------------------")
-    typer.echo(f"Querying scene catalog for {city.capitalize()}...")
-    meta = client.fetch_scene_metadata(city.lower())
-    for yr, sc in meta.items():
+
+    typer.echo("================ GEE Status ================")
+    typer.echo(f"Status:       {status['status']}")
+    typer.echo(f"Auth Mode:    {status['auth_mode']}")
+    typer.echo(f"Project ID:   {status['project_id']}")
+    typer.echo(f"Endpoint:     {status['endpoint_url']}")
+    typer.echo(f"Collections:  {', '.join(status['collections'])}")
+    typer.echo(f"Cloud Mask:   {status['cloud_masking']}")
+    typer.echo(f"Harmonize:    {status['harmonization']}")
+    typer.echo("--------------------------------------------")
+    typer.echo(f"Querying USGS Landsat Catalog for AOI '{aoi}'...")
+    scenes = client.fetch_scene_metadata(aoi)
+    for yr, sc in scenes.items():
         typer.echo(
             f"  Epoch {yr}: Scene {sc['scene_id']} | Date: {sc['acquisition_date']} | "
             f"Cloud: {sc['cloud_cover']}% | Sensor: {sc['sensor']}"
         )
     typer.echo("==================================================")
-    typer.echo("GEE route verification successful.")
 
 
 @app.command()
@@ -240,6 +205,9 @@ def run(
     config: Optional[Path] = typer.Option(None, help="Path to config YAML"),
     city: Optional[str] = typer.Option(
         None, help="Shortcut city name: bhopal, sehore, kothri, indore"
+    ),
+    synthetic: bool = typer.Option(
+        False, help="Run in explicit synthetic demo mode for software verification"
     ),
 ):
     """Execute end-to-end GreenPlan pipeline from Phase 2 through Phase 7."""
@@ -263,7 +231,7 @@ def run(
     typer.echo(
         f"Starting end-to-end GreenPlan execution for {cfg.study_area.name} (Config: {config})..."
     )
-    run_dir = run_pipeline(config)
+    run_dir = run_pipeline(config, synthetic_mode=synthetic)
     typer.echo(f"Run completed successfully! Artifacts written to: {run_dir}")
     typer.echo(f"View report at: {run_dir / 'report' / 'dashboard.html'}")
     typer.echo("Or launch server: uv run greenplan serve")

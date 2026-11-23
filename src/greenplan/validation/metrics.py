@@ -8,7 +8,7 @@ import numpy as np
 def compute_confusion_matrix(
     y_true: np.ndarray, y_pred: np.ndarray, num_classes: int
 ) -> np.ndarray:
-    """Compute k x k confusion matrix where rows are actual and cols are predicted."""
+    """Compute k x k confusion matrix where rows are actual (reference) and cols are predicted (map)."""
     cm = np.zeros((num_classes, num_classes), dtype=np.int64)
     valid = (y_true >= 0) & (y_true < num_classes) & (y_pred >= 0) & (y_pred < num_classes)
     for t, p in zip(y_true[valid], y_pred[valid]):
@@ -63,37 +63,45 @@ def evaluate_classification(cm: np.ndarray) -> Dict:
 
 
 def compute_area_adjusted_accuracy(
-    cm: np.ndarray, stratum_weights: np.ndarray, total_area_ha: float
+    cm_reference_rows: np.ndarray, map_stratum_weights: np.ndarray, total_area_ha: float
 ) -> List[Dict]:
     """Compute area-adjusted class areas and 95% confidence intervals (Olofsson et al. 2014).
 
-    cm: Confusion matrix where rows are map classes (strata) and cols are reference classes.
-    stratum_weights: W_i = Area_i / Total_Area.
+    Parameters:
+        cm_reference_rows: Standard k x k confusion matrix where rows are reference classes
+                           and columns are map classes.
+                           This function transposes it internally so rows represent map strata (i)
+                           and columns represent reference classes (j).
+        map_stratum_weights: W_i = Area_map_i / Total_Area (proportion of mapped area in class i).
+        total_area_ha: Total landscape area in hectares.
+
+    Returns:
+        List of dicts containing area-adjusted area (ha), 95% CI (ha), and proportion per class.
     """
-    k = cm.shape[0]
-    n_i_dot = np.sum(cm, axis=1, keepdims=True)
-    # Estimated proportion of area p_ij
-    p_ij = np.zeros_like(cm, dtype=np.float64)
+    # Transpose so rows = map strata (i), columns = reference classes (j)
+    n_ij_mat = cm_reference_rows.T
+    k = n_ij_mat.shape[0]
+
+    n_i_dot = np.sum(n_ij_mat, axis=1, keepdims=True)  # total samples per map stratum
+    p_ij = np.zeros_like(n_ij_mat, dtype=np.float64)
+
     for i in range(k):
         if n_i_dot[i, 0] > 0:
-            p_ij[i, :] = stratum_weights[i] * (cm[i, :] / n_i_dot[i, 0])
+            p_ij[i, :] = map_stratum_weights[i] * (n_ij_mat[i, :] / n_i_dot[i, 0])
 
-    p_dot_j = np.sum(p_ij, axis=0)  # Area proportion of reference class j
+    p_dot_j = np.sum(p_ij, axis=0)  # Estimated area proportion of reference class j
 
-    # Standard error of area proportion S(p_dot_j)
     results = []
     for j in range(k):
         var_sum = 0.0
         for i in range(k):
             if n_i_dot[i, 0] > 1:
-                n_ij = cm[i, j]
-                var_sum += (
-                    (stratum_weights[i] ** 2)
-                    * (n_ij / n_i_dot[i, 0])
-                    * (1.0 - n_ij / n_i_dot[i, 0])
-                    / (n_i_dot[i, 0] - 1)
-                )
-        se_j = np.sqrt(var_sum)
+                n_ij = n_ij_mat[i, j]
+                n_i = n_i_dot[i, 0]
+                prop_ij = n_ij / n_i
+                var_sum += ((map_stratum_weights[i] ** 2) * prop_ij * (1.0 - prop_ij)) / (n_i - 1)
+
+        se_j = np.sqrt(max(0.0, var_sum))
         adjusted_area_ha = float(p_dot_j[j] * total_area_ha)
         ci_95_ha = float(1.96 * se_j * total_area_ha)
 
@@ -109,32 +117,85 @@ def compute_area_adjusted_accuracy(
 
 
 def compute_figure_of_merit(
-    actual_t1: np.ndarray, actual_t2: np.ndarray, simulated_t2: np.ndarray, target_class: int
+    actual_t1: np.ndarray, actual_t2: np.ndarray, simulated_t2: np.ndarray, target_class: int = 0
 ) -> Dict:
-    """Calculate Pontius Figure of Merit (FoM) and null-model baseline for target class conversion."""
-    observed_change = (actual_t1 != target_class) & (actual_t2 == target_class)
-    predicted_change = (actual_t1 != target_class) & (simulated_t2 == target_class)
+    """Calculate Pontius Figure of Merit (FoM) and null-model baseline for target class conversion.
 
-    # Hits (B)
-    hits = np.sum(observed_change & predicted_change)
-    # Misses (A)
-    misses = np.sum(observed_change & ~predicted_change)
-    # False alarms (C)
-    false_alarms = np.sum(~observed_change & predicted_change)
+    According to Pontius et al. (2008, 2011):
+      FoM = B / (A + B + C + D)
+    where:
+      A = Error due to observed change predicted as persistence (misses)
+      B = Correct due to observed change predicted as change (hits)
+      C = Error due to observed persistence predicted as change (false alarms)
+      D = Error due to observed change predicted as change to wrong category (wrong category hits)
 
-    denominator = hits + misses + false_alarms
+    Also computes Pontius Kappa components: K_standard, K_location, K_quantity.
+    """
+    valid = (actual_t1 >= 0) & (actual_t2 >= 0) & (simulated_t2 >= 0)
+    act_t1 = actual_t1[valid]
+    act_t2 = actual_t2[valid]
+    sim_t2 = simulated_t2[valid]
+
+    # For the target class (typically 0: Built-up urban growth):
+    obs_changed_to_target = (act_t1 != target_class) & (act_t2 == target_class)
+    pred_changed_to_target = (act_t1 != target_class) & (sim_t2 == target_class)
+
+    # B: Hits (observed change to target & correctly predicted)
+    hits = int(np.sum(obs_changed_to_target & pred_changed_to_target))
+
+    # A: Misses (observed change to target, but predicted persistence in initial non-target class)
+    misses = int(np.sum(obs_changed_to_target & (sim_t2 == act_t1)))
+
+    # C: False alarms (observed persistence in non-target, predicted change to target)
+    false_alarms = int(np.sum((act_t1 == act_t2) & (act_t1 != target_class) & pred_changed_to_target))
+
+    # D: Wrong category hits (observed change to target but predicted change to another class,
+    #    OR observed change to a third class but predicted change to target)
+    wrong_category = int(
+        np.sum(
+            (obs_changed_to_target & (sim_t2 != act_t1) & (sim_t2 != target_class))
+            | ((act_t1 != act_t2) & (act_t2 != target_class) & pred_changed_to_target)
+        )
+    )
+
+    denominator = hits + misses + false_alarms + wrong_category
     fom = float(hits / denominator) if denominator > 0 else 0.0
 
-    # Null model accuracy (persistence)
-    null_agreement = float(np.mean(actual_t1 == actual_t2))
-    model_agreement = float(np.mean(actual_t2 == simulated_t2))
+    # Agreement metrics
+    null_agreement = float(np.mean(act_t1 == act_t2))
+    model_agreement = float(np.mean(act_t2 == sim_t2))
+
+    # Pontius Kappa components (K_standard, K_location, K_quantity)
+    # Using cross-tabulation between act_t2 and sim_t2
+    num_classes = max(int(np.max(act_t2)), int(np.max(sim_t2))) + 1
+    cm_sim = np.zeros((num_classes, num_classes), dtype=np.int64)
+    for a, s in zip(act_t2, sim_t2):
+        cm_sim[a, s] += 1
+
+    total = np.sum(cm_sim)
+    if total > 0:
+        p_o = float(np.trace(cm_sim) / total)  # observed proportion agreement
+        r_sums = np.sum(cm_sim, axis=1) / total
+        c_sums = np.sum(cm_sim, axis=0) / total
+        p_c = float(np.sum(r_sums * c_sums))  # chance agreement
+        p_max = float(np.sum(np.minimum(r_sums, c_sums)))  # maximum agreement given marginals
+
+        k_standard = float((p_o - p_c) / (1.0 - p_c)) if p_c < 1.0 else 1.0
+        k_location = float((p_o - p_c) / (p_max - p_c)) if p_max > p_c else 0.0
+        k_quantity = float((p_max - p_c) / (1.0 - p_c)) if p_c < 1.0 else 0.0
+    else:
+        k_standard, k_location, k_quantity = 0.0, 0.0, 0.0
 
     return {
         "figure_of_merit": fom,
-        "hits": int(hits),
-        "misses": int(misses),
-        "false_alarms": int(false_alarms),
+        "hits": hits,
+        "misses": misses,
+        "false_alarms": false_alarms,
+        "wrong_category": wrong_category,
         "model_agreement": model_agreement,
         "null_model_agreement": null_agreement,
-        "beats_null_model": model_agreement >= null_agreement,
+        "beats_null_model": bool(model_agreement > null_agreement),  # strict inequality
+        "kappa_standard": k_standard,
+        "kappa_location": k_location,
+        "kappa_quantity": k_quantity,
     }
