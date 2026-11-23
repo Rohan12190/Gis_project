@@ -158,7 +158,7 @@ def serve(
                 self.wfile.write(response_bytes)
                 return
 
-            super().do_GET(self)
+            super().do_GET()
 
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", port), GreenPlanRequestHandler) as httpd:
