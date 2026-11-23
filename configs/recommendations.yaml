@@ -1,0 +1,44 @@
+recommendations:
+  - id: "REC_HIGH_HEAT_HIGH_RISK"
+    title: "Urgent Green Corridor Designation & Permeable Mandates"
+    severity: "critical"
+    trigger_condition: "risk == 'high' and heat == 'high'"
+    actions:
+      - "Mandate 30% green area ratio on all new development site approvals."
+      - "Establish legally binding ecological green corridors connecting fragmented canopy."
+      - "Enforce cool pavement standards and permeable ground surfaces to minimize thermal runoff."
+    source: "Mondal et al. (2021), Sustainable Cities and Society, 70, 102914"
+    assumption: false
+
+  - id: "REC_HIGH_HEAT_LOW_RISK"
+    title: "Urban Heat Island Mitigation & Canopy Infill"
+    severity: "critical"
+    trigger_condition: "risk == 'low' and heat == 'high'"
+    actions:
+      - "Retrofit existing dense built-up zones with reflective cool roofs."
+      - "Deploy pocket parks and vertical green walls on high-density residential blocks."
+      - "Plant broad-canopy shade trees along all arterial road networks at 10m intervals."
+    source: "Kumar et al. (2019), Modeling Earth Systems and Environment, 5(2), 527-539"
+    assumption: false
+
+  - id: "REC_LOW_HEAT_HIGH_RISK"
+    title: "Preventive Ecological Buffer & Buffer Zoning"
+    severity: "moderate"
+    trigger_condition: "risk == 'high' and heat == 'low'"
+    actions:
+      - "Enforce pre-construction environmental impact assessments on peripheral agricultural land."
+      - "Mandate 50m riparian conservation buffers along wetlands and water bodies."
+      - "Implement a 1:3 compensatory native tree plantation policy for any verified tree removal."
+    source: "Bhattacharjee et al. (2025), Discover Cities, 2, 6"
+    assumption: false
+
+  - id: "REC_LOW_HEAT_LOW_RISK"
+    title: "Long-term Ecological Monitoring & Community Stewardship"
+    severity: "good"
+    trigger_condition: "risk == 'low' and heat == 'low'"
+    actions:
+      - "Maintain baseline ecological monitoring and preserve existing water bodies."
+      - "Promote community urban farming and micro-afforestation reserves."
+    source: "Patel et al. (2024), Results in Engineering, 21, 101788"
+    assumption: false
+

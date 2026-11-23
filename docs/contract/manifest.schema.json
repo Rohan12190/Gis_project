@@ -1,0 +1,130 @@
+{
+  "$defs": {
+    "ArtifactRecord": {
+      "description": "Metadata for a single output artifact.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "artifact_type": {
+          "description": "raster, vector, table, metric, or figure",
+          "title": "Artifact Type",
+          "type": "string"
+        },
+        "path": {
+          "description": "Relative path from run root",
+          "title": "Path",
+          "type": "string"
+        },
+        "format": {
+          "description": "tif, geojson, csv, json, png",
+          "title": "Format",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "SHA-256 checksum of the file",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "artifact_type",
+        "path",
+        "format",
+        "sha256"
+      ],
+      "title": "ArtifactRecord",
+      "type": "object"
+    },
+    "BoundingBox": {
+      "description": "Geographic bounds in WGS 84 [min_lon, min_lat, max_lon, max_lat].",
+      "properties": {
+        "min_lon": {
+          "title": "Min Lon",
+          "type": "number"
+        },
+        "min_lat": {
+          "title": "Min Lat",
+          "type": "number"
+        },
+        "max_lon": {
+          "title": "Max Lon",
+          "type": "number"
+        },
+        "max_lat": {
+          "title": "Max Lat",
+          "type": "number"
+        }
+      },
+      "required": [
+        "min_lon",
+        "min_lat",
+        "max_lon",
+        "max_lat"
+      ],
+      "title": "BoundingBox",
+      "type": "object"
+    }
+  },
+  "description": "Self-describing manifest for a completed GreenPlan pipeline run.",
+  "properties": {
+    "schema_version": {
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "timestamp_utc": {
+      "title": "Timestamp Utc",
+      "type": "string"
+    },
+    "project_name": {
+      "title": "Project Name",
+      "type": "string"
+    },
+    "study_area": {
+      "title": "Study Area",
+      "type": "string"
+    },
+    "projected_crs": {
+      "title": "Projected Crs",
+      "type": "string"
+    },
+    "bounds_wgs84": {
+      "$ref": "#/$defs/BoundingBox"
+    },
+    "config_hash": {
+      "title": "Config Hash",
+      "type": "string"
+    },
+    "artifacts": {
+      "items": {
+        "$ref": "#/$defs/ArtifactRecord"
+      },
+      "title": "Artifacts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "timestamp_utc",
+    "project_name",
+    "study_area",
+    "projected_crs",
+    "bounds_wgs84",
+    "config_hash",
+    "artifacts"
+  ],
+  "title": "RunManifest",
+  "type": "object"
+}

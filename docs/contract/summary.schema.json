@@ -1,0 +1,59 @@
+{
+  "description": "Headline metrics for dashboard display.",
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "study_area": {
+      "title": "Study Area",
+      "type": "string"
+    },
+    "baseline_year": {
+      "title": "Baseline Year",
+      "type": "integer"
+    },
+    "recent_year": {
+      "title": "Recent Year",
+      "type": "integer"
+    },
+    "green_cover_pct_baseline": {
+      "title": "Green Cover Pct Baseline",
+      "type": "number"
+    },
+    "green_cover_pct_recent": {
+      "title": "Green Cover Pct Recent",
+      "type": "number"
+    },
+    "net_green_loss_sqkm": {
+      "title": "Net Green Loss Sqkm",
+      "type": "number"
+    },
+    "builtup_growth_sqkm": {
+      "title": "Builtup Growth Sqkm",
+      "type": "number"
+    },
+    "mean_lst_celsius_recent": {
+      "title": "Mean Lst Celsius Recent",
+      "type": "number"
+    },
+    "high_priority_conservation_sqkm": {
+      "title": "High Priority Conservation Sqkm",
+      "type": "number"
+    }
+  },
+  "required": [
+    "run_id",
+    "study_area",
+    "baseline_year",
+    "recent_year",
+    "green_cover_pct_baseline",
+    "green_cover_pct_recent",
+    "net_green_loss_sqkm",
+    "builtup_growth_sqkm",
+    "mean_lst_celsius_recent",
+    "high_priority_conservation_sqkm"
+  ],
+  "title": "RunSummary",
+  "type": "object"
+}

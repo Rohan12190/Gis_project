@@ -1,0 +1,63 @@
+[project]
+name = "greenplan"
+version = "0.1.0"
+description = "Urban Growth & Green Space Planning Using GIS - EPICS23-554"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Rohan", email = "177009010+Rohan12190@users.noreply.github.com" }
+]
+dependencies = [
+    "numpy>=1.26.0",
+    "pandas>=2.1.0",
+    "scipy>=1.11.0",
+    "scikit-learn>=1.3.0",
+    "pydantic>=2.5.0",
+    "pyyaml>=6.0.1",
+    "typer>=0.9.0",
+    "matplotlib>=3.8.0",
+    "statsmodels>=0.14.0",
+    "earthengine-api>=1.7.53",
+]
+
+[project.optional-dependencies]
+gis = [
+    "shapely>=2.0.0",
+    "pyproj>=3.6.0",
+    "rasterio>=1.3.0",
+    "geopandas>=0.14.0",
+    "earthengine-api>=0.1.380",
+]
+spatial = [
+    "libpysal>=4.9.0",
+    "esda>=2.5.0",
+    "spreg>=1.4.0",
+    "numba>=0.59.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+greenplan = "greenplan.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/greenplan"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

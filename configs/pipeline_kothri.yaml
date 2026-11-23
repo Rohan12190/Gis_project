@@ -1,0 +1,51 @@
+project_name: "EPICS23-554"
+random_seed: 42
+projected_crs: "EPSG:32643"
+
+study_area:
+  name: "Kothri"
+  geojson_path: "configs/aoi/kothri.geojson"
+  buffer_meters: 1000.0
+
+epochs:
+  - 2000
+  - 2010
+  - 2020
+
+projection_years:
+  - 2030
+  - 2040
+
+class_scheme:
+  - id: 0
+    name: "Built-up"
+    color: "#e74c3c"
+    description: "Impervious surfaces, residential, college campus structures, highway corridor"
+  - id: 1
+    name: "Green space"
+    color: "#27ae60"
+    description: "Orchards, riparian tree buffers, canal-side canopy"
+  - id: 2
+    name: "Farmland"
+    color: "#f1c40f"
+    description: "Intensive agricultural fields, soybean/wheat farming plains"
+  - id: 3
+    name: "Water"
+    color: "#2980b9"
+    description: "Rivers, agricultural storage ponds, irrigation canals"
+  - id: 4
+    name: "Bare land"
+    color: "#95a5a6"
+    description: "Open uncultivated fields, dry riverbeds, unpaved village tracts"
+
+composite_window:
+  start: "03-01"
+  end: "05-15"
+
+lst_window:
+  start: "04-01"
+  end: "05-31"
+
+planning_grid_size_m: 500.0
+rf_num_trees: 100
+rf_min_split: 2

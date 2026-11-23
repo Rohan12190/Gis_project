@@ -1,0 +1,16 @@
+scenarios:
+  - name: "BAU"
+    description: "Business-As-Usual: Historical urban expansion trends continue without restrictive spatial zoning."
+    protection_mask: false
+    green_protection_buffer_m: 0.0
+
+  - name: "GreenProtection"
+    description: "Conservation Scenario: Strict permanent no-build protection on all existing green space and water bodies."
+    protection_mask: true
+    green_protection_buffer_m: 100.0
+
+  - name: "CompactGrowth"
+    description: "Infill Scenario: Development restricted to areas within 500m of existing built-up corridors."
+    protection_mask: false
+    green_protection_buffer_m: 50.0
+
