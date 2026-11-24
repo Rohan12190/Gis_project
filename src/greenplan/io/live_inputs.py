@@ -196,7 +196,7 @@ def build_live_inputs(
     def _pull_aligned_raster(img: ee.Image) -> np.ndarray:
         """Reproject image onto the fixed UTM grid to prevent shape discrepancies or edge padding."""
         reprojected = img.reproject(crs=utm_crs, crsTransform=crs_transform)
-        arr = geemap.ee_to_numpy(reprojected, region=aoi_utm, crs=utm_crs)
+        arr = geemap.ee_to_numpy(reprojected, region=aoi_utm)
         return arr.squeeze()
 
     place_name = name or reverse_geocode_place(lat, lon)
