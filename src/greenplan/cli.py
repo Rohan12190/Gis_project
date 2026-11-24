@@ -33,7 +33,6 @@ def serve(
     """Serve interactive GreenPlan report dashboard on local web server."""
     import http.server
     import json
-    import os
     import socketserver
     from urllib.parse import parse_qs, urlparse
 
@@ -55,9 +54,10 @@ def serve(
     )
     typer.echo("Press Ctrl+C to stop the server.")
 
-    os.chdir(target_dir)
-
     class GreenPlanRequestHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(target_dir), **kwargs)
+
         def do_GET(self):
             parsed = urlparse(self.path)
             if parsed.path == "/api/predict_gee":

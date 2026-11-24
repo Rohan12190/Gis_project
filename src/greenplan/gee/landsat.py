@@ -9,16 +9,22 @@ import numpy as np
 
 def load_dotenv(dotenv_path: Path | str = ".env") -> None:
     """Load key-value environment variables from .env file into os.environ if present."""
-    p = Path(dotenv_path)
-    if p.exists():
-        with open(p, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    k, v = k.strip(), v.strip().strip('"').strip("'")
-                    if k and k not in os.environ:
-                        os.environ[k] = v
+    candidates = [
+        Path(dotenv_path),
+        Path(__file__).resolve().parents[3] / ".env",
+        Path.cwd() / ".env",
+    ]
+    for p in candidates:
+        if p.exists():
+            with open(p, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip().strip('"').strip("'")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+            break
 
 
 load_dotenv()
