@@ -27,3 +27,11 @@
   - `src/greenplan/viewer.py`: Added prominent `SYNTHETIC DEMO - NOT EMPIRICAL` warning banner when viewing synthetic runs.
   - `docs/phase_reports/phase_3.md`, `phase_4_5.md`, `phase_6.md`, `README.md`: Relabeled validation metrics as synthetic pipeline verification benchmarks and documented empirical data requirements.
 - **Tests Added:** `tests/test_data_provider.py` (`test_load_real_inputs_nonexistent_dir`, `test_load_real_inputs_partial_contract`, `test_load_real_inputs_complete_contract`, `test_generate_synthetic_inputs`, `test_pipeline_raises_on_missing_real_data`).
+
+## Task 4: Stratified Sampling for Olofsson Area Adjustment & Honest CIs
+- **Files Modified:** `src/greenplan/validation/metrics.py`, `src/greenplan/pipeline.py`
+- **Changes:**
+  - Implemented `sample_reference_points(map_arr, n_per_class, seed, min_samples)` to draw stratified random samples where strata are predicted map classes, with minimum sample guarantees for rare classes.
+  - Built sample confusion matrix from stratified reference sample instead of full-raster pixel matrix, ensuring realistic and defensible confidence intervals per Olofsson et al. (2014).
+  - Updated `pipeline.py` to preserve spatial-block CV for classifier performance (`pixel_cv`) while using the stratified sample for area adjustment (`area_adjusted_sample`), writing both to `metrics/accuracy.json`.
+- **Tests Added:** `tests/test_metrics.py` (`test_sample_reference_points`, `test_olofsson_hand_computed_ground_truth_and_ci_comparison`).

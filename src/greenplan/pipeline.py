@@ -45,7 +45,12 @@ from greenplan.thermal.regression import (
     compute_morans_i_residuals,
     fit_lst_regression,
 )
-from greenplan.validation.metrics import compute_area_adjusted_accuracy, compute_figure_of_merit
+from greenplan.validation.metrics import (
+    compute_area_adjusted_accuracy,
+    compute_confusion_matrix,
+    compute_figure_of_merit,
+    sample_reference_points,
+)
 
 
 def run_pipeline(
@@ -148,10 +153,16 @@ def run_pipeline(
     predicted_rf_map = rf_result["model"].predict(features).reshape((h, w))
 
     # Area-adjusted accuracy (Olofsson et al. 2014):
-    # Stratum weights W_i must come from the MAP prediction classes, not reference labels
+    # Draw stratified random sample of reference points where strata are predicted MAP classes
+    sampled_indices = sample_reference_points(
+        predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
+    )
+    sample_cm = compute_confusion_matrix(
+        labels[sampled_indices], predicted_rf_map.ravel()[sampled_indices], num_classes=5
+    )
     map_stratum_weights = np.bincount(predicted_rf_map.ravel(), minlength=5)[:5] / n_pixels
     area_adj_records = compute_area_adjusted_accuracy(
-        rf_result["confusion_matrix"], map_stratum_weights, total_area_ha
+        sample_cm, map_stratum_weights, total_area_ha
     )
     df_area_adj = pd.DataFrame(area_adj_records)
     df_area_adj["class_name"] = [c.name for c in cfg.class_scheme[: len(df_area_adj)]]
@@ -497,8 +508,16 @@ def run_pipeline(
     df_trans["data_source"] = data_source_label
     df_trans.to_csv(run_dir / "tables" / "transitions_2010_2020.csv")
 
+    accuracy_output = {
+        "pixel_cv": rf_result["metrics"],
+        "area_adjusted_sample": {
+            "sample_size": int(len(sampled_indices)),
+            "sample_confusion_matrix": sample_cm.tolist(),
+            "classes": area_adj_records,
+        },
+    }
     with open(run_dir / "metrics" / "accuracy.json", "w", encoding="utf-8") as f:
-        json.dump(rf_result["metrics"], f, indent=2)
+        json.dump(accuracy_output, f, indent=2)
 
     with open(run_dir / "metrics" / "simulation.json", "w", encoding="utf-8") as f:
         json.dump(fom_res, f, indent=2)

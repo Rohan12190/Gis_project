@@ -5,6 +5,49 @@ from typing import Dict, List
 import numpy as np
 
 
+def sample_reference_points(
+    map_arr: np.ndarray,
+    n_per_class: int = 50,
+    seed: int = 42,
+    min_samples: int = 20,
+) -> np.ndarray:
+    """Draw stratified random sample indices from map raster for accuracy assessment.
+
+    Strata correspond to predicted MAP classes (Olofsson et al. 2014).
+    Rare classes with fewer pixels than min_samples are fully sampled.
+
+    Parameters:
+        map_arr: 1D or 2D array of mapped class predictions.
+        n_per_class: Target sample size per map class stratum.
+        seed: Random seed for reproducible spatial sampling.
+        min_samples: Minimum sample size for rare classes.
+
+    Returns:
+        1D sorted array of flat pixel indices selected for reference verification.
+    """
+    flat_map = map_arr.ravel()
+    classes = np.unique(flat_map)
+    rng = np.random.default_rng(seed)
+
+    sampled = []
+    for c in classes:
+        idx = np.flatnonzero(flat_map == c)
+        if len(idx) == 0:
+            continue
+        if len(idx) <= min_samples:
+            target_n = len(idx)
+        else:
+            target_n = min(len(idx), max(min_samples, n_per_class))
+
+        chosen = rng.choice(idx, size=target_n, replace=False)
+        sampled.append(chosen)
+
+    if not sampled:
+        return np.array([], dtype=np.int64)
+
+    return np.sort(np.concatenate(sampled))
+
+
 def compute_confusion_matrix(
     y_true: np.ndarray, y_pred: np.ndarray, num_classes: int
 ) -> np.ndarray:
