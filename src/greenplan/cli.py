@@ -110,5 +110,89 @@ def analyze(
     typer.echo(f"Full results written to: {run_dir / 'results.json'}")
 
 
+snapshot_app = typer.Typer(help="Manage frozen offline GIS snapshots")
+app.add_typer(snapshot_app, name="snapshot")
+
+
+@snapshot_app.command("create")
+def snapshot_create(
+    snapshot_id: str = typer.Option(..., "--id", help="Unique identifier for the snapshot"),
+    lat: float = typer.Option(..., "--lat", help="Center latitude coordinate"),
+    lon: float = typer.Option(..., "--lon", help="Center longitude coordinate"),
+    radius: float = typer.Option(10.0, "--radius", help="Snapshot radius in kilometers"),
+    output: Path = typer.Option(
+        Path("data/snapshots"), "--output", help="Base directory for snapshots"
+    ),
+):
+    """Create a self-contained frozen snapshot from real Earth Engine data."""
+    from greenplan.snapshots import create_snapshot
+
+    typer.echo(
+        f"Creating snapshot '{snapshot_id}' for ({lat:.4f}, {lon:.4f}) with radius {radius} km..."
+    )
+
+    def _prog(msg: str, frac: float):
+        typer.echo(f"[{int(frac*100):3d}%] {msg}")
+
+    meta = create_snapshot(
+        snapshot_id=snapshot_id,
+        lat=lat,
+        lon=lon,
+        radius_km=radius,
+        output_base=output,
+        progress=_prog,
+    )
+    typer.echo(f"Snapshot '{snapshot_id}' created successfully!")
+    typer.echo(f"Location: {meta['name']} | Checkpoints: {meta['checkpoints']}")
+
+
+@snapshot_app.command("verify")
+def snapshot_verify(
+    base_dir: Path = typer.Option(
+        Path("data/snapshots"), "--dir", help="Base directory of snapshots"
+    ),
+):
+    """Verify cryptographic SHA-256 integrity of all snapshot files."""
+    from greenplan.snapshots import verify_snapshots
+
+    results = verify_snapshots(base_dir=base_dir)
+    if not results:
+        typer.echo("No snapshots found to verify.")
+        return
+
+    all_ok = True
+    for snap_id, ok in results.items():
+        status = "PASSED" if ok else "FAILED"
+        if not ok:
+            all_ok = False
+        typer.echo(f"Snapshot '{snap_id}': {status}")
+
+    if not all_ok:
+        raise typer.Exit(code=1)
+
+
+@snapshot_app.command("list")
+def snapshot_list(
+    base_dir: Path = typer.Option(
+        Path("data/snapshots"), "--dir", help="Base directory of snapshots"
+    ),
+):
+    """List all available snapshots and headline KPIs."""
+    from greenplan.snapshots import list_snapshots
+
+    snaps = list_snapshots(base_dir=base_dir)
+    if not snaps:
+        typer.echo("No snapshots available.")
+        return
+
+    for s in snaps:
+        hd = s.get("headline", {})
+        typer.echo(f"- [{s['snapshot_id']}] {s['name']} ({s['lat']:.4f}, {s['lon']:.4f})")
+        typer.echo(
+            f"  Green Cover: {hd.get('green_cover_pct_baseline')}% -> {hd.get('green_cover_pct_recent')}% | "
+            f"Net Loss: {hd.get('net_green_loss_sqkm')} sq km"
+        )
+
+
 if __name__ == "__main__":
     app()

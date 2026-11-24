@@ -1,0 +1,37 @@
+{
+  "snapshot_id": "bhopal",
+  "name": "Bhopal",
+  "lat": 23.2599,
+  "lon": 77.4126,
+  "radius_km": 10.0,
+  "checkpoints": [
+    2000,
+    2004,
+    2008,
+    2012,
+    2016,
+    2020,
+    2025
+  ],
+  "crs": "EPSG:32643",
+  "headline": {
+    "run_id": "_staging",
+    "study_area": "Bhopal",
+    "baseline_year": 2000,
+    "recent_year": 2025,
+    "green_cover_pct_baseline": 0.33,
+    "green_cover_pct_recent": 5.15,
+    "net_green_loss_sqkm": -21.131,
+    "builtup_growth_sqkm": 59.683,
+    "mean_lst_celsius_recent": 48.56,
+    "high_priority_conservation_sqkm": 18.015,
+    "farmland_pct_baseline": 4.0,
+    "farmland_pct_recent": 22.8,
+    "builtup_pct_baseline": 46.6,
+    "builtup_pct_recent": 60.2,
+    "water_pct": 8.1,
+    "data_source": "landsat_gee_live",
+    "accuracy_reference": "ESA WorldCover 2020 (proxy reference)"
+  },
+  "thumbnail_file": "thumbnail.png"
+}

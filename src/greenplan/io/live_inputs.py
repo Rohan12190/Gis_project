@@ -20,6 +20,27 @@ from greenplan.io.data_provider import PipelineInputs
 logger = logging.getLogger(__name__)
 
 
+def align_raster_shape(arr: np.ndarray, target_shape: Tuple[int, int], fill_value: Any = 0) -> np.ndarray:
+    """Ensure array matches target (H, W) exactly, padding or trimming 1-pixel rounding differences."""
+    if arr.shape[:2] == target_shape:
+        return arr
+    th, tw = target_shape
+    if arr.ndim == 2:
+        target_dtype = arr.dtype
+        if fill_value < 0 and np.issubdtype(arr.dtype, np.unsignedinteger):
+            target_dtype = np.int16
+        out = np.full((th, tw), fill_value, dtype=target_dtype)
+        h, w = min(arr.shape[0], th), min(arr.shape[1], tw)
+        out[:h, :w] = arr[:h, :w]
+        return out
+    elif arr.ndim == 3:
+        out = np.full((th, tw, arr.shape[2]), fill_value, dtype=arr.dtype)
+        h, w = min(arr.shape[0], th), min(arr.shape[1], tw)
+        out[:h, :w, :] = arr[:h, :w, :]
+        return out
+    return arr
+
+
 def compute_utm_zone_and_crs(lon: float, lat: float) -> Tuple[int, str]:
     """Determine EPSG UTM projection code and zone from WGS84 coordinates."""
     zone = int((lon + 180.0) / 6.0) + 1
@@ -226,6 +247,11 @@ def build_live_inputs(
         class_arr = geemap.ee_to_numpy(classified_img, region=aoi_wgs84, scale=30)
         epoch_rasters[yr] = class_arr.squeeze().astype(np.uint8)
 
+    # Ensure all epoch rasters share identical dimensions
+    target_shape = epoch_rasters[target_epochs[-1]].shape
+    for yr in target_epochs:
+        epoch_rasters[yr] = align_raster_shape(epoch_rasters[yr], target_shape, fill_value=4)
+
     # Apply temporal consistency filter
     epoch_rasters = apply_builtup_persistence_filter(epoch_rasters)
 
@@ -235,6 +261,7 @@ def build_live_inputs(
     comp_2020, _ = build_composite(aoi_wgs84, year=2020, min_images=2)
     bands_img = comp_2020.select(["nir", "red", "swir1", "green", "tir"])
     bands_arr = geemap.ee_to_numpy(bands_img, region=aoi_wgs84, scale=30)
+    bands_arr = align_raster_shape(bands_arr, target_shape, fill_value=0.0)
 
     bands_2020 = {
         "nir": bands_arr[:, :, 0].astype(np.float32),
@@ -252,11 +279,13 @@ def build_live_inputs(
 
     comp_first, _ = build_composite(aoi_wgs84, year=first_yr, min_images=2)
     arr_first = geemap.ee_to_numpy(comp_first.select(["ndvi", "tir"]), region=aoi_wgs84, scale=30)
+    arr_first = align_raster_shape(arr_first, target_shape, fill_value=0.0)
     ndvi_first = arr_first[:, :, 0].astype(np.float32)
     thermal_first = arr_first[:, :, 1].astype(np.float32)
 
     comp_latest, _ = build_composite(aoi_wgs84, year=latest_yr, min_images=2)
     arr_latest = geemap.ee_to_numpy(comp_latest.select(["ndvi", "tir"]), region=aoi_wgs84, scale=30)
+    arr_latest = align_raster_shape(arr_latest, target_shape, fill_value=0.0)
     ndvi_latest = arr_latest[:, :, 0].astype(np.float32)
     thermal_latest = arr_latest[:, :, 1].astype(np.float32)
 
@@ -272,6 +301,7 @@ def build_live_inputs(
     )
     remapped_wc = wc_img.remap(list(remapping.keys()), list(remapping.values()), defaultValue=-1)
     ref_2020 = geemap.ee_to_numpy(remapped_wc.toByte(), region=aoi_wgs84, scale=30).squeeze()
+    ref_2020 = align_raster_shape(ref_2020, target_shape, fill_value=-1)
 
     # 6. Annual greenness series via server-side reduceRegion
     if progress:

@@ -150,8 +150,15 @@ def run_analysis(
 
     accuracy_ref_desc = "ESA WorldCover 2020 (proxy reference)"
     if inputs.reference_2020 is not None:
-        ref_flat = inputs.reference_2020.ravel()
-        valid_ref_mask = ref_flat >= 0
+        ref_arr = inputs.reference_2020
+        if ref_arr.shape != (h, w):
+            aligned_ref = np.full((h, w), -1, dtype=ref_arr.dtype)
+            min_rh, min_rw = min(h, ref_arr.shape[0]), min(w, ref_arr.shape[1])
+            aligned_ref[:min_rh, :min_rw] = ref_arr[:min_rh, :min_rw]
+            ref_arr = aligned_ref
+
+        ref_flat = ref_arr.ravel()
+        valid_ref_mask = (ref_flat >= 0) & (ref_flat < 5)
         pred_flat = lulc_2020.ravel()
         sampled_indices = sample_reference_points(
             lulc_2020, n_per_class=50, seed=cfg.random_seed, min_samples=20
