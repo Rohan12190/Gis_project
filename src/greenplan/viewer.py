@@ -2,6 +2,7 @@
 
 import base64
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -49,17 +50,23 @@ def generate_dynamic_narrative(summary: Dict, city_key: str) -> Dict:
     green_recent = summary.get("green_cover_pct_recent", 0.0)
     built_recent = summary.get("builtup_pct_recent", 0.0)
     farm_recent = summary.get("farmland_pct_recent", 0.0)
-    data_source = summary.get("data_source", "empirical_satellite_data")
-    is_synth = "synthetic" in data_source
-    acc_ref = summary.get(
-        "accuracy_reference",
-        "Synthetic Ground Truth (Scaffold Benchmark)"
-        if is_synth
-        else "ESA WorldCover 2020 (proxy reference)",
-    )
+    data_source = summary.get("data_source", "unknown")
+
+    if data_source == "unknown":
+        badge = "UNKNOWN DATA SOURCE"
+        acc_ref = "Not specified"
+    elif "synthetic" in data_source:
+        badge = "SYNTHETIC DEMO"
+        acc_ref = summary.get(
+            "accuracy_reference", "Synthetic Ground Truth (Scaffold Benchmark)"
+        )
+    else:
+        badge = "EMPIRICAL (proxy reference)"
+        acc_ref = summary.get(
+            "accuracy_reference", "ESA WorldCover 2020 (proxy reference)"
+        )
 
     title = summary.get("study_area", city_key.capitalize())
-    badge = "SYNTHETIC DEMO" if is_synth else "EMPIRICAL (proxy reference)"
 
     desc = (
         f"<ul class='bullet-list'>"
@@ -129,6 +136,7 @@ def build_empty_region_payload(city_key: str, gee_client: GEEClient) -> Dict:
         "trans_html": "<p>No transition data found.</p>",
         "orbit": orbit,
         "scenes_rows": scenes_rows,
+        "scenarios": None,
     }
 
 
@@ -195,6 +203,13 @@ def build_region_payload(run_path: Path, city_key: str, gee_client: GEEClient) -
 
     narrative = generate_dynamic_narrative(summary, city_key)
 
+    scenarios_file = run_path / "tables" / "scenario_projections.csv"
+    scenarios_data = (
+        pd.read_csv(scenarios_file).to_dict(orient="records")
+        if scenarios_file.exists()
+        else None
+    )
+
     return {
         "city_key": city_key,
         "run_id": summary.get("run_id", run_path.name),
@@ -213,6 +228,7 @@ def build_region_payload(run_path: Path, city_key: str, gee_client: GEEClient) -
         "trans_html": trans_html,
         "orbit": orbit,
         "scenes_rows": scenes_rows,
+        "scenarios": scenarios_data,
     }
 
 
@@ -307,13 +323,46 @@ def generate_html_report(run_dir: Path | str) -> Path:
         --red: #ef4444;
         --border: #334155;
     }}
+    @media (prefers-color-scheme: light) {{
+        :root {{
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --card-border: #cbd5e1;
+            --text: #0f172a;
+            --muted: #64748b;
+            --accent: #059669;
+            --blue: #0284c7;
+            --amber: #d97706;
+            --purple: #9333ea;
+            --red: #dc2626;
+            --border: #cbd5e1;
+        }}
+    }}
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 14px;
         background: var(--bg);
         color: var(--text);
         padding: 1.5rem 2rem 3rem 2rem;
         line-height: 1.6;
+    }}
+    @media print {{
+        body {{
+            background: #ffffff !important;
+            color: #000000 !important;
+            padding: 0 !important;
+        }}
+        .nav-container, .map-controls-bar, .toggle-guide-btn, #top-guide, #slippy-guide, #map-guide, .btn-print, #swipe-toolbar-controls {{
+            display: none !important;
+        }}
+        .card, .kpi-card, .figure-card, .story-card, #provenance-banner {{
+            border: 1px solid #cbd5e1 !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+            box-shadow: none !important;
+            break-inside: avoid;
+        }}
     }}
     header {{
         border-bottom: 1px solid var(--border);
@@ -695,11 +744,26 @@ def generate_html_report(run_dir: Path | str) -> Path:
         <h1>GreenPlan <span>Urban Growth & Satellite Thermal</span> Dashboard</h1>
         <p class="subtitle">Multi-Temporal Satellite GIS Analytics across Central Madhya Pradesh (2000 - 2020) | EPICS23-554</p>
     </div>
-    <div style="font-size: 0.82rem; color: var(--muted); text-align: right;">
-        <div>Peer-Reviewed Defensible Pipeline</div>
-        <div style="color: #10b981; font-weight: 600;">Olofsson (2014) • Roy (2016) Harmonized</div>
+    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <button onclick="window.print()" class="btn-print toggle-guide-btn" style="background: var(--card-bg); color: var(--text); border: 1px solid var(--border); display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.9rem; font-size: 0.82rem; font-weight: 600; cursor: pointer; border-radius: 6px;">🖨️ Print / Save as PDF</button>
+        <div style="font-size: 0.82rem; color: var(--muted); text-align: right;">
+            <div>Peer-Reviewed Defensible Pipeline</div>
+            <div style="color: #10b981; font-weight: 600;">Olofsson (2014) • Roy (2016) Harmonized</div>
+        </div>
     </div>
 </header>
+
+<!-- Provenance Banner (B1) -->
+<div id="provenance-banner" style="width: 100%; border-radius: 8px; padding: 0.8rem 1.2rem; margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; border: 1px solid var(--border); background: var(--card-bg);">
+    <div style="display: flex; align-items: center; gap: 0.7rem;">
+        <span id="provenance-icon" style="font-size: 1.3rem;">❓</span>
+        <div>
+            <div id="provenance-title" style="font-weight: 700; font-size: 0.92rem; letter-spacing: 0.02em; color: var(--text);">UNKNOWN DATA SOURCE</div>
+            <div id="provenance-desc" style="font-size: 0.8rem; color: var(--muted); margin-top: 0.1rem;">Data source provenance status for this region</div>
+        </div>
+    </div>
+    <div id="provenance-ref" style="font-size: 0.8rem; color: var(--muted); text-align: right; font-weight: 500;">Reference: Not specified</div>
+</div>
 
 <div class="nav-container">
     <div class="region-nav">
@@ -793,13 +857,13 @@ def generate_html_report(run_dir: Path | str) -> Path:
             <div style="display: flex; gap: 0.8rem; align-items: center; margin-top: 0.6rem; flex-wrap: wrap;">
                 <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: #cbd5e1;">
                     <span>Overlay Opacity:</span>
-                    <input type="range" min="0" max="1" step="0.05" value="0.75" oninput="updateOverlayOpacity(this.value)" style="cursor: pointer; width: 110px;">
-                    <span id="opacity-val" style="font-weight: 700; color: #38bdf8;">75%</span>
+                    <input type="range" min="0" max="1" step="0.05" value="0.7" oninput="updateOverlayOpacity(this.value)" style="cursor: pointer; width: 110px;">
+                    <span id="opacity-val" style="font-weight: 700; color: #38bdf8;">70%</span>
                 </div>
                 <div style="display: flex; gap: 0.4rem; margin-left: auto; flex-wrap: wrap;">
                     <button onclick="resetMapView()" class="toggle-guide-btn" id="btn-map-reset" style="background:#1e293b; color:#cbd5e1; border-color:#334155;">🔄 Reset View</button>
-                    <button onclick="setBaseMap('sat')" class="toggle-guide-btn" id="btn-map-sat" style="background:#0284c7; color:#fff; border-color:#38bdf8;">🛰️ Satellite Base</button>
-                    <button onclick="setBaseMap('osm')" class="toggle-guide-btn" id="btn-map-osm" style="background:#1e293b; color:#cbd5e1; border-color:#334155;">🗺️ Street Map</button>
+                    <button onclick="setBaseMap('sat')" class="toggle-guide-btn" id="btn-map-sat" style="background:#0284c7; color:#fff; border-color:#38bdf8;">Base map: Satellite</button>
+                    <button onclick="setBaseMap('osm')" class="toggle-guide-btn" id="btn-map-osm" style="background:#1e293b; color:#cbd5e1; border-color:#334155;">Base map: Street</button>
                 </div>
             </div>
 
@@ -891,33 +955,73 @@ def generate_html_report(run_dir: Path | str) -> Path:
         </div>
     </div>
 
-    <!-- KPI Grid -->
-    <div class="kpi-grid">
+    <!-- KPI Grid (B2) -->
+    <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
         <div class="kpi-card">
-            <div class="kpi-title">2000 Green Canopy</div>
-            <div class="kpi-value" id="kpi-canopy-00" style="color: #10b981;">--%</div>
-            <div style="font-size:0.75rem;color:var(--muted)">Baseline Pre-Monsoon Green Cover</div>
+            <div class="kpi-title" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>Built-up %</span>
+                <span class="kpi-tag" style="display:none; font-size:0.65rem; background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid #f59e0b; border-radius:4px; padding:1px 5px; font-weight:700;">SYNTHETIC</span>
+            </div>
+            <div class="kpi-value" id="kpi-built" style="color: #ef4444;">--%</div>
+            <div style="font-size:0.75rem;color:var(--muted)">2020 Urban Footprint</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-title">2020 Green Canopy</div>
-            <div class="kpi-value" id="kpi-canopy-20" style="color: #38bdf8;">--%</div>
-            <div style="font-size:0.75rem;color:var(--muted)">Conserved Vegetation Canopy</div>
+            <div class="kpi-title" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>Green %</span>
+                <span class="kpi-tag" style="display:none; font-size:0.65rem; background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid #f59e0b; border-radius:4px; padding:1px 5px; font-weight:700;">SYNTHETIC</span>
+            </div>
+            <div class="kpi-value" id="kpi-green" style="color: #10b981;">--%</div>
+            <div style="font-size:0.75rem;color:var(--muted)">2020 Canopy &amp; Parks</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-title">Built-Up Expansion</div>
-            <div class="kpi-value" id="kpi-growth" style="color: #ef4444;">+-- km²</div>
-            <div style="font-size:0.75rem;color:var(--muted)">20-Year Urban Footprint Added</div>
+            <div class="kpi-title" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>Farmland %</span>
+                <span class="kpi-tag" style="display:none; font-size:0.65rem; background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid #f59e0b; border-radius:4px; padding:1px 5px; font-weight:700;">SYNTHETIC</span>
+            </div>
+            <div class="kpi-value" id="kpi-farm" style="color: #eab308;">--%</div>
+            <div style="font-size:0.75rem;color:var(--muted)">2020 Agricultural Area</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-title">Mean Surface Temp (LST)</div>
+            <div class="kpi-title" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>Mean LST (°C)</span>
+                <span class="kpi-tag" style="display:none; font-size:0.65rem; background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid #f59e0b; border-radius:4px; padding:1px 5px; font-weight:700;">SYNTHETIC</span>
+            </div>
             <div class="kpi-value" id="kpi-lst" style="color: #f59e0b;">-- °C</div>
             <div style="font-size:0.75rem;color:var(--muted)">Peak Summer Ground Heat</div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-title">High Priority Conservation</div>
-            <div class="kpi-value" id="kpi-priority" style="color: #a855f7;">-- km²</div>
-            <div style="font-size:0.75rem;color:var(--muted)">Risk × Heat Critical Zone</div>
+            <div class="kpi-title" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>Net Green Change</span>
+                <span class="kpi-tag" style="display:none; font-size:0.65rem; background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid #f59e0b; border-radius:4px; padding:1px 5px; font-weight:700;">SYNTHETIC</span>
+            </div>
+            <div class="kpi-value" id="kpi-green-change" style="color: #38bdf8;">-- km²</div>
+            <div style="font-size:0.75rem;color:var(--muted)">2000-2020 Net Trajectory</div>
         </div>
+        <div class="kpi-card">
+            <div class="kpi-title" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>Built-up Growth</span>
+                <span class="kpi-tag" style="display:none; font-size:0.65rem; background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid #f59e0b; border-radius:4px; padding:1px 5px; font-weight:700;">SYNTHETIC</span>
+            </div>
+            <div class="kpi-value" id="kpi-growth" style="color: #ef4444;">-- km²</div>
+            <div style="font-size:0.75rem;color:var(--muted)">20-Year Urban Expansion</div>
+        </div>
+    </div>
+
+    <!-- Scenario Comparison Chart (B3) -->
+    <div class="figure-card" style="margin-bottom: 2.2rem; padding: 1.4rem 1.6rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.6rem;">
+            <div>
+                <h3 style="margin: 0; font-size: 1.1rem; color: var(--text);">📊 CA-Markov Future Growth Scenarios (2020 vs 2030 &amp; 2040)</h3>
+                <span style="font-size: 0.82rem; color: var(--muted);">Multi-temporal spatial allocation comparison (km²) under Business-As-Usual (BAU) vs. Green Protection</span>
+            </div>
+            <div id="scenario-chart-legend" style="display: flex; gap: 0.8rem; font-size: 0.8rem; flex-wrap: wrap; align-items: center;">
+                <span style="display:inline-flex; align-items:center; gap:0.3rem;"><span style="width:12px; height:12px; background:#ef4444; border-radius:2px; display:inline-block;"></span> Built-up</span>
+                <span style="display:inline-flex; align-items:center; gap:0.3rem;"><span style="width:12px; height:12px; background:#10b981; border-radius:2px; display:inline-block;"></span> Green</span>
+                <span style="display:inline-flex; align-items:center; gap:0.3rem;"><span style="width:12px; height:12px; background:#eab308; border-radius:2px; display:inline-block;"></span> Farmland</span>
+            </div>
+        </div>
+        <div id="scenario-chart-container" style="width: 100%; min-height: 240px; overflow-x: auto;"></div>
+        <p style="font-size: 0.8rem; color: var(--muted); text-align: center; margin-top: 0.6rem; font-style: italic;">What-if scenarios, not predictions</p>
     </div>
 
     <!-- Satellite Maps Section -->
@@ -1202,7 +1306,7 @@ let aoiPolygon = null;
 let markersGroup = null;
 let currentOverlayLayer = null;
 let currentOverlayType = 'lulc_2020';
-let overlayOpacity = 0.75;
+let overlayOpacity = 0.7;
 
 // 20-Year Swipe Slider Globals
 let swipeLayer2000 = null;
@@ -1725,10 +1829,61 @@ function switchRegion(city) {{
     const r = DATA[city];
     if (!r) return;
 
+    // Update Provenance Banner (B1)
+    const provBanner = document.getElementById('provenance-banner');
+    const provIcon = document.getElementById('provenance-icon');
+    const provTitle = document.getElementById('provenance-title');
+    const provDesc = document.getElementById('provenance-desc');
+    const provRef = document.getElementById('provenance-ref');
+    const isSynth = r.summary && r.summary.data_source && String(r.summary.data_source).includes('synthetic');
+    const isEmpirical = r.summary && r.summary.data_source && String(r.summary.data_source).includes('empirical');
+
+    if (provBanner) {{
+        if (isSynth) {{
+            provBanner.style.background = 'rgba(245, 158, 11, 0.12)';
+            provBanner.style.borderColor = '#f59e0b';
+            if (provIcon) provIcon.innerText = '⚠️';
+            if (provTitle) {{
+                provTitle.innerText = 'SYNTHETIC DEMO - software verification, not satellite findings';
+                provTitle.style.color = '#fbbf24';
+            }}
+            if (provDesc) provDesc.innerText = 'Synthetic calibration scaffold. Metrics do NOT reflect real Earth observation measurements.';
+            if (provRef) {{
+                provRef.innerText = 'Reference: Internal synthetic baseline';
+                provRef.style.color = '#fbbf24';
+            }}
+        }} else if (isEmpirical) {{
+            provBanner.style.background = 'rgba(16, 185, 129, 0.12)';
+            provBanner.style.borderColor = '#10b981';
+            if (provIcon) provIcon.innerText = '🛰️';
+            if (provTitle) {{
+                provTitle.innerText = 'EMPIRICAL - reference: ESA WorldCover 2020 (proxy)';
+                provTitle.style.color = '#34d399';
+            }}
+            if (provDesc) provDesc.innerText = 'Trained on USGS Landsat multi-spectral bands vs independent ESA WorldCover 2020 proxy reference.';
+            if (provRef) {{
+                provRef.innerText = 'Reference: ESA WorldCover 2020 (v100)';
+                provRef.style.color = '#34d399';
+            }}
+        }} else {{
+            provBanner.style.background = 'var(--card-bg)';
+            provBanner.style.borderColor = 'var(--border)';
+            if (provIcon) provIcon.innerText = '❓';
+            if (provTitle) {{
+                provTitle.innerText = 'UNKNOWN DATA SOURCE';
+                provTitle.style.color = 'var(--muted)';
+            }}
+            if (provDesc) provDesc.innerText = 'Data source provenance not specified.';
+            if (provRef) {{
+                provRef.innerText = 'Reference: Not specified';
+                provRef.style.color = 'var(--muted)';
+            }}
+        }}
+    }}
+
     // Update Story Card
     const synthBanner = document.getElementById('synthetic-warning-banner');
     if (synthBanner) {{
-        const isSynth = r.summary && r.summary.data_source && String(r.summary.data_source).includes('synthetic');
         synthBanner.style.display = isSynth ? 'block' : 'none';
     }}
     document.getElementById('story-title').innerText = r.narrative.title;
@@ -1737,12 +1892,28 @@ function switchRegion(city) {{
     document.getElementById('story-desc').innerHTML = r.narrative.description;
     document.getElementById('story-takeaway').innerText = '💡 Key Takeaway: ' + r.narrative.key_takeaway;
 
-    // Update KPIs
-    document.getElementById('kpi-canopy-00').innerText = r.summary.green_cover_pct_baseline + '%';
-    document.getElementById('kpi-canopy-20').innerText = r.summary.green_cover_pct_recent + '%';
-    document.getElementById('kpi-growth').innerText = (r.summary.builtup_growth_sqkm > 0 ? '+' : '') + r.summary.builtup_growth_sqkm + ' km²';
-    document.getElementById('kpi-lst').innerText = r.summary.mean_lst_celsius_recent + ' °C';
-    document.getElementById('kpi-priority').innerText = r.summary.high_priority_conservation_sqkm + ' km²';
+    // Update KPIs (B2) - formatted to 1 decimal place with units
+    const s = r.summary || {{}};
+    const builtPct = (s.builtup_pct_recent !== undefined && s.builtup_pct_recent !== null) ? Number(s.builtup_pct_recent).toFixed(1) + '%' : '--%';
+    const greenPct = (s.green_cover_pct_recent !== undefined && s.green_cover_pct_recent !== null) ? Number(s.green_cover_pct_recent).toFixed(1) + '%' : '--%';
+    const farmPct = (s.farmland_pct_recent !== undefined && s.farmland_pct_recent !== null) ? Number(s.farmland_pct_recent).toFixed(1) + '%' : '--%';
+    const lstVal = (s.mean_lst_celsius_recent !== undefined && s.mean_lst_celsius_recent !== null) ? Number(s.mean_lst_celsius_recent).toFixed(1) + ' °C' : '-- °C';
+    const netGreen = (s.net_green_loss_sqkm !== undefined && s.net_green_loss_sqkm !== null) ? (s.net_green_loss_sqkm > 0 ? '-' : '+') + Math.abs(Number(s.net_green_loss_sqkm)).toFixed(1) + ' km²' : '-- km²';
+    const builtGrowth = (s.builtup_growth_sqkm !== undefined && s.builtup_growth_sqkm !== null) ? (s.builtup_growth_sqkm > 0 ? '+' : '') + Number(s.builtup_growth_sqkm).toFixed(1) + ' km²' : '-- km²';
+
+    document.getElementById('kpi-built').innerText = builtPct;
+    document.getElementById('kpi-green').innerText = greenPct;
+    document.getElementById('kpi-farm').innerText = farmPct;
+    document.getElementById('kpi-lst').innerText = lstVal;
+    document.getElementById('kpi-green-change').innerText = netGreen;
+    document.getElementById('kpi-growth').innerText = builtGrowth;
+
+    document.querySelectorAll('.kpi-tag').forEach(tag => {{
+        tag.style.display = isSynth ? 'inline-block' : 'none';
+    }});
+
+    // Update Scenario Comparison Grouped Bar Chart (B3)
+    renderScenarioChart(r);
 
     // Update Images
     document.getElementById('img-lulc').src = r.lulc_img;
@@ -1755,6 +1926,110 @@ function switchRegion(city) {{
 
     // Update Leaflet Map
     updateMapForCity(city);
+}}
+
+function renderScenarioChart(r) {{
+    const container = document.getElementById('scenario-chart-container');
+    if (!container) return;
+    if (!r || !r.scenarios || !Array.isArray(r.scenarios) || r.scenarios.length === 0) {{
+        container.innerHTML = '<div style="padding: 2.5rem 1rem; text-align: center; color: var(--muted); font-size: 0.9rem; font-style: italic; background: rgba(15, 23, 42, 0.4); border-radius: 8px; border: 1px dashed var(--border);">No scenario data for this region</div>';
+        return;
+    }}
+
+    const scenarios = r.scenarios;
+    let maxVal = 0;
+    scenarios.forEach(d => {{
+        const b = parseFloat(d.Builtup_sqkm) || 0;
+        const g = parseFloat(d.Green_sqkm) || 0;
+        const f = parseFloat(d.Farmland_sqkm) || 0;
+        if (b > maxVal) maxVal = b;
+        if (g > maxVal) maxVal = g;
+        if (f > maxVal) maxVal = f;
+    }});
+    if (maxVal === 0) maxVal = 10;
+    const yMax = Math.ceil(maxVal * 1.15 * 10) / 10;
+
+    const svgWidth = 720;
+    const svgHeight = 240;
+    const padLeft = 50;
+    const padRight = 20;
+    const padTop = 25;
+    const padBottom = 45;
+    const chartW = svgWidth - padLeft - padRight;
+    const chartH = svgHeight - padTop - padBottom;
+
+    const numGroups = scenarios.length;
+    const groupWidth = chartW / numGroups;
+    const barW = Math.min(22, (groupWidth - 24) / 3);
+
+    let gridSvg = '';
+    const numTicks = 4;
+    for (let i = 0; i <= numTicks; i++) {{
+        const tickVal = (yMax / numTicks) * i;
+        const y = padTop + chartH - (tickVal / yMax) * chartH;
+        gridSvg += `<line x1="${{padLeft}}" y1="${{y}}" x2="${{svgWidth - padRight}}" y2="${{y}}" stroke="rgba(148, 163, 184, 0.15)" stroke-width="1" stroke-dasharray="3,3"/>`;
+        gridSvg += `<text x="${{padLeft - 8}}" y="${{y + 4}}" fill="var(--muted)" font-size="10" text-anchor="end">${{tickVal.toFixed(1)}}</text>`;
+    }}
+
+    let barsSvg = '';
+    let labelsSvg = '';
+
+    scenarios.forEach((d, idx) => {{
+        const groupCenterX = padLeft + idx * groupWidth + groupWidth / 2;
+        const startX = groupCenterX - (barW * 3 + 8) / 2;
+
+        const valBuilt = parseFloat(d.Builtup_sqkm) || 0;
+        const valGreen = parseFloat(d.Green_sqkm) || 0;
+        const valFarm = parseFloat(d.Farmland_sqkm) || 0;
+
+        const hBuilt = (valBuilt / yMax) * chartH;
+        const hGreen = (valGreen / yMax) * chartH;
+        const hFarm = (valFarm / yMax) * chartH;
+
+        const yBuilt = padTop + chartH - hBuilt;
+        const yGreen = padTop + chartH - hGreen;
+        const yFarm = padTop + chartH - hFarm;
+
+        const scName = d.Scenario || d.scenario || ('Scenario ' + (idx + 1));
+        const shortName = scName.replace('GreenProtection', 'GreenProt');
+
+        // Built bar
+        barsSvg += `<rect x="${{startX}}" y="${{yBuilt}}" width="${{barW}}" height="${{hBuilt}}" fill="#ef4444" rx="2">
+            <title>${{scName}} (Year ${{d.Year || ''}})\\nBuilt-up: ${{valBuilt.toFixed(2)}} km²</title>
+        </rect>`;
+        barsSvg += `<text x="${{startX + barW/2}}" y="${{yBuilt - 4}}" fill="#ef4444" font-size="9" text-anchor="middle" font-weight="600">${{valBuilt.toFixed(1)}}</text>`;
+
+        // Green bar
+        barsSvg += `<rect x="${{startX + barW + 4}}" y="${{yGreen}}" width="${{barW}}" height="${{hGreen}}" fill="#10b981" rx="2">
+            <title>${{scName}} (Year ${{d.Year || ''}})\\nGreen Space: ${{valGreen.toFixed(2)}} km²</title>
+        </rect>`;
+        barsSvg += `<text x="${{startX + barW + 4 + barW/2}}" y="${{yGreen - 4}}" fill="#10b981" font-size="9" text-anchor="middle" font-weight="600">${{valGreen.toFixed(1)}}</text>`;
+
+        // Farm bar
+        barsSvg += `<rect x="${{startX + (barW + 4) * 2}}" y="${{yFarm}}" width="${{barW}}" height="${{hFarm}}" fill="#eab308" rx="2">
+            <title>${{scName}} (Year ${{d.Year || ''}})\\nFarmland: ${{valFarm.toFixed(2)}} km²</title>
+        </rect>`;
+        barsSvg += `<text x="${{startX + (barW + 4) * 2 + barW/2}}" y="${{yFarm - 4}}" fill="#eab308" font-size="9" text-anchor="middle" font-weight="600">${{valFarm.toFixed(1)}}</text>`;
+
+        // X-axis group label
+        labelsSvg += `<text x="${{groupCenterX}}" y="${{padTop + chartH + 18}}" fill="var(--text)" font-size="11" font-weight="600" text-anchor="middle">${{shortName}}</text>`;
+        if (d.Year) {{
+            labelsSvg += `<text x="${{groupCenterX}}" y="${{padTop + chartH + 32}}" fill="var(--muted)" font-size="10" text-anchor="middle">${{d.Year}}</text>`;
+        }}
+    }});
+
+    const yAxisLabel = `<text x="12" y="${{padTop - 10}}" fill="var(--muted)" font-size="10" font-weight="600">km²</text>`;
+
+    container.innerHTML = `
+        <svg viewBox="0 0 ${{svgWidth}} ${{svgHeight}}" style="width: 100%; height: auto; display: block;" xmlns="http://www.w3.org/2000/svg">
+            ${{gridSvg}}
+            <line x1="${{padLeft}}" y1="${{padTop + chartH}}" x2="${{svgWidth - padRight}}" y2="${{padTop + chartH}}" stroke="var(--border)" stroke-width="1.5"/>
+            <line x1="${{padLeft}}" y1="${{padTop}}" x2="${{padLeft}}" y2="${{padTop + chartH}}" stroke="var(--border)" stroke-width="1.5"/>
+            ${{yAxisLabel}}
+            ${{barsSvg}}
+            ${{labelsSvg}}
+        </svg>
+    `;
 }}
 
 function toggleGuides() {{
@@ -2108,6 +2383,10 @@ window.addEventListener('DOMContentLoaded', () => {{
     switchRegion('bhopal');
 }});
 </script>
+
+<footer style="margin-top: 3.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); text-align: center; font-size: 0.85rem; color: var(--muted);">
+    GreenPlan — EPICS23-554 — Generated from run {run_dir.name} on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}
+</footer>
 
 </body>
 </html>

@@ -153,3 +153,116 @@ def test_load_real_inputs_shape_mismatch(tmp_path):
 
     with pytest.raises(ValueError, match="Shape mismatch"):
         load_real_inputs(tmp_path)
+
+
+def test_extract_spatial_drivers_without_road_mask():
+    """Test A1: with road_mask=None the driver matrix has 2 columns and trains cleanly."""
+    from greenplan.simulation.suitability import extract_spatial_drivers, train_suitability_model
+
+    h, w = 20, 20
+    built_mask = np.zeros((h, w), dtype=bool)
+    built_mask[5:10, 5:10] = True
+    water_mask = np.zeros((h, w), dtype=bool)
+    water_mask[0:3, :] = True
+
+    drivers, driver_dict = extract_spatial_drivers(built_mask, road_mask=None, water_mask=water_mask)
+    assert drivers.shape == (h * w, 2)
+    assert not np.isnan(drivers).any()
+    assert "prox_roads" not in driver_dict
+    assert "prox_built" in driver_dict
+    assert "prox_water" in driver_dict
+
+    # Train suitability model with 2 drivers
+    lulc = np.full((h, w), 2, dtype=np.uint8)
+    lulc[built_mask] = 0
+    lulc[water_mask] = 3
+    transitions = (lulc.ravel() == 0).astype(int)
+    model, suit_metrics = train_suitability_model(
+        drivers=drivers,
+        observed_transitions=transitions,
+        driver_names=["Prox_Built", "Prox_Water"],
+        seed=42,
+    )
+    assert model is not None
+    assert "Prox_Built" in suit_metrics["feature_importances"]
+    assert "Prox_Water" in suit_metrics["feature_importances"]
+    assert "Prox_Roads" not in suit_metrics["feature_importances"]
+
+
+def test_empirical_missing_reference_raises_clear_error(tmp_path):
+    """Test A2: empirical mode raises ValueError if reference_2020 or reference_metrics is missing."""
+    from greenplan.api.schemas import BoundingBox
+    from greenplan.pipeline import run_pipeline
+
+    h, w = 15, 15
+    # Build fake empirical inputs missing reference_2020
+    fake_inputs = PipelineInputs(
+        lulc_2000=np.zeros((h, w), dtype=np.uint8),
+        lulc_2010=np.ones((h, w), dtype=np.uint8),
+        lulc_2020=np.full((h, w), 2, dtype=np.uint8),
+        bands_2020={
+            "nir": np.ones((h, w), dtype=np.float32),
+            "red": np.ones((h, w), dtype=np.float32),
+            "swir1": np.ones((h, w), dtype=np.float32),
+            "green": np.ones((h, w), dtype=np.float32),
+            "tir": np.full((h, w), 30.0, dtype=np.float32),
+        },
+        lst_2020=np.full((h, w), 30.0, dtype=np.float32),
+        water_mask=np.zeros((h, w), dtype=bool),
+        valid_mask=np.ones((h, w), dtype=bool),
+        coords=np.zeros((h, w, 2), dtype=np.float32),
+        bounds=BoundingBox(min_lon=77.0, min_lat=23.0, max_lon=77.5, max_lat=23.5),
+        pixel_size_m=30.0,
+        pixel_area_ha=0.09,
+        crs="EPSG:32643",
+        data_source="empirical_satellite_data",
+        reference_2020=None,  # Missing!
+        reference_metrics=None,
+    )
+
+    with pytest.raises(ValueError, match="requires both 'reference_2020.npy' and 'accuracy_reference.json'"):
+        run_pipeline(
+            "configs/pipeline.yaml",
+            run_id="test_missing_ref",
+            synthetic_mode=False,
+            preloaded_inputs=fake_inputs,
+        )
+
+
+def test_empirical_missing_metric_keys_raises_error(tmp_path):
+    """Test A2: empirical mode validates that reference_metrics has required keys."""
+    from greenplan.api.schemas import BoundingBox
+    from greenplan.pipeline import run_pipeline
+
+    h, w = 15, 15
+    fake_inputs = PipelineInputs(
+        lulc_2000=np.zeros((h, w), dtype=np.uint8),
+        lulc_2010=np.ones((h, w), dtype=np.uint8),
+        lulc_2020=np.full((h, w), 2, dtype=np.uint8),
+        bands_2020={
+            "nir": np.ones((h, w), dtype=np.float32),
+            "red": np.ones((h, w), dtype=np.float32),
+            "swir1": np.ones((h, w), dtype=np.float32),
+            "green": np.ones((h, w), dtype=np.float32),
+            "tir": np.full((h, w), 30.0, dtype=np.float32),
+        },
+        lst_2020=np.full((h, w), 30.0, dtype=np.float32),
+        water_mask=np.zeros((h, w), dtype=bool),
+        valid_mask=np.ones((h, w), dtype=bool),
+        coords=np.zeros((h, w, 2), dtype=np.float32),
+        bounds=BoundingBox(min_lon=77.0, min_lat=23.0, max_lon=77.5, max_lat=23.5),
+        pixel_size_m=30.0,
+        pixel_area_ha=0.09,
+        crs="EPSG:32643",
+        data_source="empirical_satellite_data",
+        reference_2020=np.zeros((h, w), dtype=np.int8),
+        reference_metrics={"overall_accuracy": 0.85},  # Missing "kappa" and "classes"!
+    )
+
+    with pytest.raises(ValueError, match="missing required keys"):
+        run_pipeline(
+            "configs/pipeline.yaml",
+            run_id="test_missing_keys",
+            synthetic_mode=False,
+            preloaded_inputs=fake_inputs,
+        )

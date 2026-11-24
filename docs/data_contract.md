@@ -13,6 +13,7 @@ data/satellite/{city_slug}/
 ├── lulc_2020.npy               # Classified LULC raster for epoch 2020 (uint8)
 ├── reference_2020.npy          # (Optional) Remapped independent reference layer (e.g. ESA WorldCover) (int8)
 ├── accuracy_reference.json     # (Optional) Non-circular CV accuracy metrics against proxy reference
+├── roads.npy                   # (Optional) Transport network / road centerlines mask (2D bool/uint8)
 ├── bands_2020.npz              # Surface reflectance & thermal band arrays for epoch 2020
 ├── meta.json                   # Spatial reference, spatial resolution, and bounding coordinates
 └── quicklook.png               # 3-panel visual overview of 2000-2020 LULC transitions

@@ -6,6 +6,9 @@ from typing import Optional
 import typer
 
 from greenplan.config import load_pipeline_config
+from greenplan.gee.landsat import load_dotenv
+
+load_dotenv()
 
 app = typer.Typer(help="GreenPlan: Urban Growth & Green Space Planning CLI")
 

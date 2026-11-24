@@ -30,28 +30,34 @@ def normalize_driver(driver: np.ndarray, invert: bool = False) -> np.ndarray:
 
 def extract_spatial_drivers(
     built_mask: np.ndarray,
-    road_mask: np.ndarray,
+    road_mask: Optional[np.ndarray],
     water_mask: np.ndarray,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """Compute normalized spatial proximity drivers from base landscape masks.
 
     Ensures proximity to built-up land is derived strictly from the baseline/current
     starting state, preventing target leakage into transition suitability models.
+    If road_mask is None, omits road proximity cleanly from drivers.
     """
-    dist_roads = compute_euclidean_distance_transform(road_mask)
     dist_water = compute_euclidean_distance_transform(water_mask)
     dist_built = compute_euclidean_distance_transform(built_mask)
 
-    prox_roads = normalize_driver(dist_roads, invert=True)
     prox_built = normalize_driver(dist_built, invert=True)
     prox_water = normalize_driver(dist_water, invert=False)
 
-    drivers_matrix = np.column_stack([prox_roads.ravel(), prox_built.ravel(), prox_water.ravel()])
     layers = {
-        "prox_roads": prox_roads,
         "prox_built": prox_built,
         "prox_water": prox_water,
     }
+
+    if road_mask is not None:
+        dist_roads = compute_euclidean_distance_transform(road_mask)
+        prox_roads = normalize_driver(dist_roads, invert=True)
+        layers["prox_roads"] = prox_roads
+        drivers_matrix = np.column_stack([prox_roads.ravel(), prox_built.ravel(), prox_water.ravel()])
+    else:
+        drivers_matrix = np.column_stack([prox_built.ravel(), prox_water.ravel()])
+
     return drivers_matrix, layers
 
 

@@ -18,6 +18,7 @@ from greenplan.classification.random_forest import train_and_evaluate_rf
 from greenplan.config import load_pipeline_config
 from greenplan.gee.indices import compute_ebbi, compute_mndwi, compute_ndbi, compute_ndvi
 from greenplan.io.data_provider import (
+    PipelineInputs,
     generate_synthetic_inputs,
     load_real_inputs,
 )
@@ -59,6 +60,7 @@ def run_pipeline(
     synthetic_mode: bool = False,
     max_pixels: Optional[int] = None,
     working_pixel_size_m: Optional[float] = None,
+    preloaded_inputs: Optional[PipelineInputs] = None,
 ) -> Path:
     """Execute end-to-end GreenPlan scientific GIS pipeline.
 
@@ -92,7 +94,9 @@ def run_pipeline(
     data_dir = Path("data") / "satellite" / city_key
     has_real_rasters = data_dir.exists() and (data_dir / "lulc_2020.npy").exists()
 
-    if not synthetic_mode:
+    if preloaded_inputs is not None:
+        inputs = preloaded_inputs
+    elif not synthetic_mode:
         if not has_real_rasters:
             raise FileNotFoundError(
                 f"Empirical satellite data directory not found or incomplete: '{data_dir}'. "
@@ -172,10 +176,56 @@ def run_pipeline(
         else "Synthetic Ground Truth (Scaffold Benchmark)"
     )
 
-    if is_empirical and inputs.reference_metrics is not None:
-        rf_result = inputs.reference_metrics
+    if is_empirical:
+        missing_refs = []
+        if inputs.reference_2020 is None:
+            missing_refs.append("reference_2020.npy")
+        if inputs.reference_metrics is None:
+            missing_refs.append("accuracy_reference.json")
+        if missing_refs:
+            raise ValueError(
+                f"Empirical satellite mode requires both 'reference_2020.npy' and 'accuracy_reference.json' in '{data_dir}'. "
+                f"Missing: {missing_refs}. Independent WorldCover reference files are produced by running "
+                f"`python scripts/build_empirical_dataset.py --city {city_key}`."
+            )
+
+        ref_metrics = (
+            inputs.reference_metrics.get("metrics")
+            or inputs.reference_metrics.get("spatial_block_cv")
+            or inputs.reference_metrics
+        )
+        required_keys = ["overall_accuracy", "kappa", "classes"]
+        missing_keys = [k for k in required_keys if k not in ref_metrics]
+        if missing_keys:
+            raise ValueError(
+                f"Invalid reference_metrics in '{data_dir}': missing required keys: {missing_keys}. "
+                f"Expected keys: {required_keys}. Re-run `python scripts/build_empirical_dataset.py --city {city_key}`."
+            )
+
+        rf_result = {
+            "metrics": ref_metrics,
+            "feature_importances": inputs.reference_metrics.get("feature_importances", {}),
+        }
         predicted_rf_map = lulc_2020.copy()
+
+        # Area-adjusted accuracy (Olofsson et al. 2014) evaluated against independent proxy reference
+        ref_flat = inputs.reference_2020.ravel()
+        valid_ref_mask = ref_flat >= 0
+        pred_flat = predicted_rf_map.ravel()
+        sampled_indices = sample_reference_points(
+            predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
+        )
+        sampled_valid = [idx for idx in sampled_indices if valid_ref_mask[idx]]
+        if len(sampled_valid) < 20:
+            sampled_valid = np.flatnonzero(valid_ref_mask)
+            if len(sampled_valid) > 250:
+                sampled_valid = rng.choice(sampled_valid, size=250, replace=False).tolist()
+        sample_cm = compute_confusion_matrix(
+            ref_flat[sampled_valid], pred_flat[sampled_valid], num_classes=5
+        )
+        sampled_indices = sampled_valid
     else:
+        # Synthetic mode: train RF on synthetic labels for algorithm mechanics verification
         features = np.column_stack(
             [
                 nir_20.ravel(),
@@ -203,27 +253,6 @@ def run_pipeline(
         )
         predicted_rf_map = rf_result["model"].predict(features).reshape((h, w))
 
-    # Area-adjusted accuracy (Olofsson et al. 2014):
-    # Draw stratified random sample of reference points where strata are predicted MAP classes
-    if is_empirical and inputs.reference_2020 is not None:
-        ref_flat = inputs.reference_2020.ravel()
-        valid_ref_mask = ref_flat >= 0
-        pred_flat = predicted_rf_map.ravel()
-        # Stratified sampling over valid reference area
-        sampled_indices = sample_reference_points(
-            predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
-        )
-        # Filter to valid reference
-        sampled_valid = [idx for idx in sampled_indices if valid_ref_mask[idx]]
-        if len(sampled_valid) < 20:
-            sampled_valid = np.flatnonzero(valid_ref_mask)
-            if len(sampled_valid) > 250:
-                sampled_valid = rng.choice(sampled_valid, size=250, replace=False).tolist()
-        sample_cm = compute_confusion_matrix(
-            ref_flat[sampled_valid], pred_flat[sampled_valid], num_classes=5
-        )
-        sampled_indices = sampled_valid
-    else:
         sampled_indices = sample_reference_points(
             predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
         )
@@ -248,9 +277,18 @@ def run_pipeline(
     change_10_20 = compute_transition_stats(lulc_2010, lulc_2020, num_classes=5)
 
     # 6. Phase 4: Spatial Drivers, Multicollinearity (VIF) & Data-Driven Suitability Modeling
-    road_mask = np.zeros((h, w), dtype=bool)
-    road_mask[:, 60] = True  # North-South highway
-    road_mask[50, :] = True  # East-West bypass
+    if is_empirical:
+        road_mask = inputs.road_mask
+    else:
+        road_mask = np.zeros((h, w), dtype=bool)
+        road_mask[:, 60] = True  # North-South highway
+        road_mask[50, :] = True  # East-West bypass
+
+    driver_names = (
+        ["Prox_Roads", "Prox_Built", "Prox_Water"]
+        if road_mask is not None
+        else ["Prox_Built", "Prox_Water"]
+    )
 
     # For TRAINING (2000 -> 2010 transition): proximity to built-up land is derived
     # strictly from the starting state (lulc_2000 == 0) to eliminate target leakage.
@@ -259,7 +297,6 @@ def run_pipeline(
         road_mask=road_mask,
         water_mask=water_mask,
     )
-    driver_names = ["Prox_Roads", "Prox_Built", "Prox_Water"]
 
     # Check Variance Inflation Factor (VIF) on the training driver matrix
     vifs = check_driver_collinearity_vif(drivers_train, driver_names)
@@ -274,6 +311,9 @@ def run_pipeline(
     suit_model, suit_metrics = train_suitability_model(
         drivers_train, observed_urban_transition, driver_names, coords=coords, seed=cfg.random_seed
     )
+    if road_mask is None:
+        suit_metrics["note"] = "roads unavailable - road proximity excluded"
+
     with open(run_dir / "metrics" / "suitability_model.json", "w", encoding="utf-8") as f:
         json.dump(suit_metrics, f, indent=2)
 
@@ -289,7 +329,9 @@ def run_pipeline(
         1: np.clip(1.0 - urban_suitability_2010, 0.0, 1.0),
         2: np.clip(0.8 - 0.5 * layers_2010["prox_built"], 0.0, 1.0),
         3: np.zeros((h, w), dtype=np.float32),
-        4: np.clip(0.5 * layers_2010["prox_roads"], 0.0, 1.0),
+        4: np.clip(0.5 * layers_2010["prox_roads"], 0.0, 1.0)
+        if "prox_roads" in layers_2010
+        else np.zeros((h, w), dtype=np.float32),
     }
 
     # For FUTURE PROJECTIONS (2020 -> 2030 and 2030 -> 2040), derive proximity drivers from lulc_2020
@@ -304,7 +346,9 @@ def run_pipeline(
         1: np.clip(1.0 - urban_suitability, 0.0, 1.0),
         2: np.clip(0.8 - 0.5 * layers_2020["prox_built"], 0.0, 1.0),
         3: np.zeros((h, w), dtype=np.float32),
-        4: np.clip(0.5 * layers_2020["prox_roads"], 0.0, 1.0),
+        4: np.clip(0.5 * layers_2020["prox_roads"], 0.0, 1.0)
+        if "prox_roads" in layers_2020
+        else np.zeros((h, w), dtype=np.float32),
     }
 
     # 7. Phase 5: LST Regression & Getis-Ord Hotspots

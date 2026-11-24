@@ -31,6 +31,7 @@ class PipelineInputs:
     data_source: str  # "empirical_satellite_data" or "synthetic_scaffold_testing"
     reference_2020: Optional[np.ndarray] = None
     reference_metrics: Optional[Dict] = None
+    road_mask: Optional[np.ndarray] = None
 
 
 def load_real_inputs(data_dir: Path | str) -> PipelineInputs:
@@ -103,10 +104,19 @@ def load_real_inputs(data_dir: Path | str) -> PipelineInputs:
         np.float32
     )
 
-    # Optional proxy reference layers and metrics
+    # Optional proxy reference layers, road mask, and metrics
     reference_2020 = None
     if (p / "reference_2020.npy").exists():
         reference_2020 = np.load(p / "reference_2020.npy")
+
+    road_mask = None
+    if (p / "roads.npy").exists():
+        road_mask_raw = np.load(p / "roads.npy")
+        if road_mask_raw.shape != (h, w):
+            raise ValueError(
+                f"Shape mismatch across epoch rasters: expected {(h, w)}, got {road_mask_raw.shape} for roads.npy"
+            )
+        road_mask = road_mask_raw.astype(bool)
 
     reference_metrics = None
     for acc_path in [p / "accuracy_reference.json", p / "metrics" / "accuracy_reference.json"]:
@@ -131,6 +141,7 @@ def load_real_inputs(data_dir: Path | str) -> PipelineInputs:
         data_source="empirical_satellite_data",
         reference_2020=reference_2020,
         reference_metrics=reference_metrics,
+        road_mask=road_mask,
     )
 
 
