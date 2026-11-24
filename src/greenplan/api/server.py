@@ -69,12 +69,30 @@ def _execute_analysis_job(job_id: str, payload: AnalyzeRequest, run_dir: Path) -
 
         summary = run_analysis(inputs, run_dir, progress=_progress)
 
+        with open(run_dir / "results.json", "r", encoding="utf-8") as f:
+            full_results = json.load(f)
+
+        # bounds in inputs: [min_lat, min_lon, max_lat, max_lon] -> [min_lon, min_lat, max_lon, max_lat]
+        bounds = [inputs.bounds[1], inputs.bounds[0], inputs.bounds[3], inputs.bounds[2]]
+
         JOBS_STORE[job_id]["status"] = "completed"
         JOBS_STORE[job_id]["progress_pct"] = 100
         JOBS_STORE[job_id]["message"] = "Analysis finished successfully!"
         JOBS_STORE[job_id]["run_id"] = run_dir.name
         JOBS_STORE[job_id]["result_url"] = f"/api/runs/{run_dir.name}"
         JOBS_STORE[job_id]["summary"] = summary.model_dump()
+        JOBS_STORE[job_id]["result"] = {
+            "run_id": run_dir.name,
+            "bounds": bounds,
+            "overlays": {
+                "planning_priority": f"/api/runs/{run_dir.name}/overlays/planning_priority.png",
+                "thermal_hotspots": f"/api/runs/{run_dir.name}/overlays/thermal_hotspots.png",
+                "urban_growth": f"/api/runs/{run_dir.name}/overlays/urban_growth.png",
+                "lulc_recent": f"/api/runs/{run_dir.name}/overlays/lulc_recent.png",
+                "lulc_baseline": f"/api/runs/{run_dir.name}/overlays/lulc_baseline.png",
+            },
+            "results": full_results,
+        }
 
     except Exception as exc:
         logger.exception("Analysis job '%s' failed: %s", job_id, exc)
@@ -207,17 +225,49 @@ def get_run_results(run_id: str, base_dir: Path = Path("outputs")) -> Any:
         return json.load(f)
 
 
+def _find_overlay_file(folder: Path, name: str) -> Optional[Path]:
+    """Resolve an overlay image file robustly across standard names and aliases."""
+    if not folder.exists():
+        return None
+
+    aliases = {
+        "planning_priority": ["overlay_priority.png", "overlay_planning_priority.png", "priority.png"],
+        "thermal_hotspots": ["overlay_thermal.png", "overlay_thermal_hotspots.png", "thermal.png"],
+        "urban_growth": ["overlay_expansion.png", "overlay_urban_growth.png", "expansion.png"],
+        "lulc_baseline": ["overlay_lulc_2000.png", "overlay_lulc_baseline.png"],
+        "lulc_recent": ["overlay_lulc_2025.png", "overlay_lulc_recent.png"],
+    }
+    candidate_names = aliases.get(name, [f"overlay_{name}.png", f"{name}.png"])
+
+    # Check dynamic years for LULC if not exact
+    if name == "lulc_baseline":
+        lulc_files = sorted(folder.glob("overlay_lulc_*.png"))
+        if lulc_files:
+            return lulc_files[0]
+    elif name == "lulc_recent":
+        lulc_files = sorted(folder.glob("overlay_lulc_*.png"))
+        if lulc_files:
+            return lulc_files[-1]
+
+    for cand in candidate_names:
+        p = folder / cand
+        if p.exists():
+            return p
+        if not cand.endswith(".png"):
+            p_png = folder / f"{cand}.png"
+            if p_png.exists():
+                return p_png
+
+    return None
+
+
 @app.get("/api/runs/{run_id}/overlays/{overlay_name}.png")
 def get_run_overlay(run_id: str, overlay_name: str, base_dir: Path = Path("outputs")) -> FileResponse:
     """Serve georeferenced transparent PNG overlay for Leaflet dashboard map."""
     figures_dir = base_dir / run_id / "figures"
-    candidates = [
-        figures_dir / f"overlay_{overlay_name}.png",
-        figures_dir / f"{overlay_name}.png",
-    ]
-    for p in candidates:
-        if p.exists():
-            return FileResponse(p, media_type="image/png")
+    target = _find_overlay_file(figures_dir, overlay_name)
+    if target:
+        return FileResponse(target, media_type="image/png")
 
     raise HTTPException(status_code=404, detail=f"Overlay '{overlay_name}' not found for run '{run_id}'.")
 
@@ -287,13 +337,9 @@ def get_snapshot_overlay(
 ) -> FileResponse:
     """Serve transparent overlay PNG from a verified snapshot directory."""
     overlays_dir = base_dir / snapshot_id / "overlays"
-    candidates = [
-        overlays_dir / f"overlay_{overlay_name}.png",
-        overlays_dir / f"{overlay_name}.png",
-    ]
-    for p in candidates:
-        if p.exists():
-            return FileResponse(p, media_type="image/png")
+    target = _find_overlay_file(overlays_dir, overlay_name)
+    if target:
+        return FileResponse(target, media_type="image/png")
 
     raise HTTPException(
         status_code=404, detail=f"Overlay '{overlay_name}' not found for snapshot '{snapshot_id}'."

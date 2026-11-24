@@ -91,3 +91,19 @@ def test_static_ui_served():
     res_js = client.get("/js/app.js")
     assert res_js.status_code == 200
 
+
+def test_snapshot_overlays_served():
+    """Verify that all snapshot overlays are resolved and returned with status 200."""
+    overlay_names = [
+        "planning_priority",
+        "thermal_hotspots",
+        "urban_growth",
+        "lulc_baseline",
+        "lulc_recent",
+    ]
+    for name in overlay_names:
+        res = client.get(f"/api/snapshots/bhopal/overlays/{name}.png")
+        assert res.status_code == 200, f"Overlay '{name}' returned {res.status_code}"
+        assert res.headers["content-type"] == "image/png"
+
+

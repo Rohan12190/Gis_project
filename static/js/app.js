@@ -446,13 +446,17 @@ async function runAnalysis() {
           progressText.textContent = "Analysis complete! Rendering results...";
 
           const r = job.result;
-          state.currentBounds = [[r.bounds[1], r.bounds[0]], [r.bounds[3], r.bounds[2]]];
-          state.currentOverlays = r.overlays;
-          state.currentResults = r.results;
+          if (r && r.bounds) {
+            state.currentBounds = [[r.bounds[1], r.bounds[0]], [r.bounds[3], r.bounds[2]]];
+            state.currentOverlays = r.overlays || {};
+            state.currentResults = r.results || {};
 
-          state.map.fitBounds(state.currentBounds, { padding: [20, 20] });
-          renderOverlays();
-          renderResults(r.results);
+            state.map.fitBounds(state.currentBounds, { padding: [20, 20] });
+            renderOverlays();
+            renderResults(state.currentResults);
+          } else if (job.summary) {
+            renderResults({ headline: job.summary });
+          }
 
           setTimeout(() => {
             progressBox.style.display = "none";
