@@ -17,9 +17,16 @@
   * Computed $5 \times 5$ transition matrices across consecutive epochs ($2000 \to 2010$ and $2010 \to 2020$).
   * Implemented an automated sanity auditor flagging and tracking implausible transitions (e.g., built-up to farmland/water).
 
-## 2. Validation Results (Gate G3 Approval Summary)
-* **Overall Accuracy (2020 Spatial-Block Validation):** $\mathbf{97.2\%}$ (Exceeding the $85\%$ conventional threshold).
-* **Cohen's Kappa:** $\mathbf{0.957}$.
+## 2. Validation Results (Synthetic Pipeline Verification Benchmark)
+
+> [!NOTE]
+> **Data Provenance & Scientific Integrity Notice:**  
+> The metrics reported below (OA: 97.2%, Kappa: 0.957, per-class F1) represent a **synthetic pipeline verification benchmark, not empirical satellite observations**.  
+> Under synthetic scaffold testing, spectral bands are generated from known class distributions to verify mathematical implementation, spatial-block fold mechanics, and area adjustment formulas.  
+> **Empirical Data Acquisition Requirements:** To produce peer-reviewed empirical findings, multi-epoch Landsat 5/7/8 surface reflectance composites must be acquired according to [`docs/data_contract.md`](../data_contract.md) or exported via `scripts/export_gee_composites.py`.
+
+* **Overall Accuracy (2020 Spatial-Block Benchmark):** $\mathbf{97.2\%}$ (synthetic generator recovery).
+* **Cohen's Kappa:** $\mathbf{0.957}$ (synthetic benchmark).
 * **Class Accuracies:**
   * Built-up: Producer's Acc $98.1\%$, User's Acc $96.4\%$, F1 $0.972$.
   * Green space: Producer's Acc $95.8\%$, User's Acc $97.1\%$, F1 $0.965$.

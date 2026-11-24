@@ -711,6 +711,21 @@ def generate_html_report(run_dir: Path) -> Path:
 
 <!-- ================= REGION VIEW (Bhopal, Kothri, Sehore, Indore) ================= -->
 <div id="city-view">
+    <!-- Synthetic Scaffold Testing Warning Banner -->
+    <div id="synthetic-warning-banner" class="synthetic-warning" style="display: none; background: rgba(239, 68, 68, 0.15); border: 2px solid #ef4444; border-radius: 10px; padding: 1rem 1.4rem; margin-bottom: 1.5rem;">
+        <div style="display: flex; align-items: center; gap: 0.8rem;">
+            <span style="font-size: 1.5rem;">⚠️</span>
+            <div>
+                <strong style="color: #f87171; font-size: 1rem; text-transform: uppercase; letter-spacing: 0.05em;">SYNTHETIC DEMO - NOT EMPIRICAL</strong>
+                <p style="color: #cbd5e1; font-size: 0.85rem; margin-top: 0.2rem;">
+                    This run was generated using a synthetic calibration scaffold for software verification and pipeline testing.
+                    Metrics (accuracy, Kappa, LST regression, FoM) do NOT reflect empirical Earth observation measurements.
+                    To acquire real satellite rasters, follow <code>docs/data_contract.md</code> or run <code>scripts/export_gee_composites.py</code>.
+                </p>
+            </div>
+        </div>
+    </div>
+
     <!-- Story Card -->
     <div class="story-card">
         <div class="story-header">
@@ -1694,6 +1709,11 @@ function switchRegion(city) {{
     if (!r) return;
 
     // Update Story Card
+    const synthBanner = document.getElementById('synthetic-warning-banner');
+    if (synthBanner) {{
+        const isSynth = r.summary && r.summary.data_source && String(r.summary.data_source).includes('synthetic');
+        synthBanner.style.display = isSynth ? 'block' : 'none';
+    }}
     document.getElementById('story-title').innerText = r.narrative.title;
     document.getElementById('story-badge').innerText = r.narrative.badge;
     document.getElementById('run-tag').innerText = 'Run: ' + r.run_id;

@@ -3,8 +3,8 @@
 from typing import Dict, Tuple
 
 import numpy as np
-from scipy.signal import convolve2d
 import statsmodels.api as sm
+from scipy.signal import convolve2d
 
 
 def fit_lst_regression(

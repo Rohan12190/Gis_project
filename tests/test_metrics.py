@@ -1,7 +1,6 @@
 """Unit tests for spatial validation and accuracy metrics."""
 
 import numpy as np
-import pytest
 
 from greenplan.validation.metrics import (
     compute_area_adjusted_accuracy,

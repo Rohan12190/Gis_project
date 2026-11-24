@@ -14,9 +14,13 @@ import pandas as pd
 
 from greenplan.api.schemas import ArtifactRecord, BoundingBox, RunSummary
 from greenplan.classification.change_analysis import compute_transition_stats
-from greenplan.classification.random_forest import apply_majority_filter, train_and_evaluate_rf
+from greenplan.classification.random_forest import train_and_evaluate_rf
 from greenplan.config import load_pipeline_config
 from greenplan.gee.indices import compute_ebbi, compute_mndwi, compute_ndbi, compute_ndvi
+from greenplan.io.data_provider import (
+    generate_synthetic_inputs,
+    load_real_inputs,
+)
 from greenplan.io.manifest import calculate_sha256, create_manifest
 from greenplan.planning.decision_matrix import (
     compute_loss_risk,
@@ -75,238 +79,44 @@ def run_pipeline(
     data_dir = Path("data") / "satellite" / city_key
     has_real_rasters = data_dir.exists() and (data_dir / "lulc_2020.npy").exists()
 
-    if not has_real_rasters and not synthetic_mode:
-        print("=" * 80)
-        print(f"[INFO] Notice: Verified satellite raster inputs not found in '{data_dir}'.")
-        print("Running in DEMO / SYNTHETIC CALIBRATION MODE for software verification.")
-        print("To run with real data, download Landsat scenes or authenticate Earth Engine.")
-        print("=" * 80)
-        synthetic_mode = True
+    if not synthetic_mode:
+        if not has_real_rasters:
+            raise FileNotFoundError(
+                f"Empirical satellite data directory not found or incomplete: '{data_dir}'. "
+                f"To run in empirical mode, acquire rasters according to docs/data_contract.md or run "
+                f"`python scripts/export_gee_composites.py --city {city_key}`. "
+                f"Alternatively, pass `--synthetic` to run the synthetic calibration scaffold."
+            )
+        inputs = load_real_inputs(data_dir)
+    else:
+        inputs = generate_synthetic_inputs(cfg, rng)
 
-    data_source_label = (
-        "synthetic_scaffold_testing" if synthetic_mode else "empirical_satellite_data"
-    )
+    lulc_2000 = inputs.lulc_2000
+    lulc_2010 = inputs.lulc_2010
+    lulc_2020 = inputs.lulc_2020
+    bands_2020 = inputs.bands_2020
+    lst_20 = inputs.lst_2020
+    water_mask = inputs.water_mask
+    valid_mask = inputs.valid_mask
+    coords = inputs.coords
+    pixel_size_m = inputs.pixel_size_m
+    pixel_area_ha = inputs.pixel_area_ha
+    data_source_label = inputs.data_source
 
-    # 1. Grid geometry and landscape calibration (120 x 120 grid cells at 30m resolution = 3.6 x 3.6 km)
-    h, w = 120, 120
+    h, w = lulc_2020.shape
     n_pixels = h * w
-    coords = np.column_stack([np.repeat(np.arange(h), w), np.tile(np.arange(w), h)]).astype(
-        np.float32
-    )
+    total_area_ha = n_pixels * pixel_area_ha
 
-    dist_to_center = np.sqrt((coords[:, 0] - h * 0.5) ** 2 + (coords[:, 1] - w * 0.5) ** 2) / (
-        np.sqrt(h**2 + w**2) * 0.5
-    )
+    nir_20 = bands_2020["nir"]
+    red_20 = bands_2020["red"]
+    swir_20 = bands_2020["swir1"]
+    green_20 = bands_2020["green"]
+    tir_20 = bands_2020["tir"]
 
-    # 2. Multi-epoch landscape simulation calibrated on regional geography
-    # Class IDs: 0: Built-up, 1: Green space, 2: Farmland, 3: Water, 4: Bare land
-    if "kothri" in city_key or "ashta" in city_key:
-        water_mask = np.zeros((h, w), dtype=bool)
-        for r in range(h):
-            c_stream = int(60 + 25 * np.sin(r / 20.0))
-            if 0 <= c_stream < w:
-                water_mask[r, max(0, c_stream - 1) : min(w, c_stream + 2)] = True
-
-        lulc_2000 = np.full((h, w), 2, dtype=np.uint8)
-        lulc_2000[water_mask] = 3
-        for r in range(h):
-            c_stream = int(60 + 25 * np.sin(r / 20.0))
-            if 0 <= c_stream < w:
-                lulc_2000[r, max(0, c_stream - 5) : max(0, c_stream - 1)] = 1
-                lulc_2000[r, min(w, c_stream + 2) : min(w, c_stream + 6)] = 1
-        lulc_2000[50:58, 40:48] = 0
-        lulc_2000[rng.random(size=(h, w)) < 0.05] = 4
-        lulc_2000[water_mask] = 3
-
-        lulc_2010 = lulc_2000.copy()
-        highway_expansion_2010 = (
-            (lulc_2000 == 2)
-            & (coords[:, 0].reshape((h, w)) >= 52)
-            & (coords[:, 0].reshape((h, w)) <= 58)
-            & (coords[:, 1].reshape((h, w)) >= 30)
-            & (coords[:, 1].reshape((h, w)) <= 70)
-            & (rng.random(size=(h, w)) < 0.35)
-        )
-        lulc_2010[highway_expansion_2010] = 0
-        lulc_2010[water_mask] = 3
-
-        lulc_2020 = lulc_2010.copy()
-        lulc_2020[54:61, 56:64] = 0
-        lulc_2020[47:53, 63:69] = 0
-        lulc_2020[62:68, 64:71] = 0
-        lulc_2020[56:58, 36:56] = 0
-        lulc_2020[48:54, 48:56] = 4
-        lulc_2020[60:66, 54:63] = 4
-        lulc_2020[54:55, 56:68] = 1
-        lulc_2020[61:62, 56:64] = 1
-        lulc_2020[water_mask] = 3
-
-    elif "sehore" in city_key:
-        water_mask = (
-            (coords[:, 0] >= 50)
-            & (coords[:, 0] <= 70)
-            & (coords[:, 1] >= 20)
-            & (coords[:, 1] <= 35)
-        ).reshape((h, w))
-
-        lulc_2000 = np.full((h, w), 2, dtype=np.uint8)
-        lulc_2000[water_mask] = 3
-        lulc_2000[48:65, 50:68] = 0
-        lulc_2000[70:85, 30:50] = 1
-        lulc_2000[rng.random(size=(h, w)) < 0.06] = 4
-        lulc_2000[water_mask] = 3
-
-        lulc_2010 = lulc_2000.copy()
-        urban_expand_2010 = (
-            (lulc_2000 == 2)
-            & (dist_to_center.reshape((h, w)) < 0.35)
-            & (rng.random(size=(h, w)) < 0.35)
-        )
-        lulc_2010[urban_expand_2010] = 0
-        lulc_2010[water_mask] = 3
-
-        lulc_2020 = lulc_2010.copy()
-        urban_expand_2020 = (
-            (lulc_2010 == 2)
-            & (dist_to_center.reshape((h, w)) < 0.50)
-            & (rng.random(size=(h, w)) < 0.40)
-        )
-        lulc_2020[urban_expand_2020] = 0
-        lulc_2020[water_mask] = 3
-
-    elif "indore" in city_key:
-        water_mask = (
-            (coords[:, 0] >= 90)
-            & (coords[:, 0] <= 110)
-            & (coords[:, 1] >= 80)
-            & (coords[:, 1] <= 100)
-        ).reshape((h, w))
-
-        lulc_2000 = np.full((h, w), 2, dtype=np.uint8)
-        lulc_2000[water_mask] = 3
-        lulc_2000[40:80, 40:80] = 0
-        lulc_2000[25:40, 50:70] = 1
-        lulc_2000[rng.random(size=(h, w)) < 0.08] = 4
-        lulc_2000[water_mask] = 3
-
-        lulc_2010 = lulc_2000.copy()
-        urban_expand_2010 = (
-            (lulc_2000 == 2)
-            & (dist_to_center.reshape((h, w)) < 0.55)
-            & (rng.random(size=(h, w)) < 0.55)
-        )
-        lulc_2010[urban_expand_2010] = 0
-        lulc_2010[water_mask] = 3
-
-        lulc_2020 = lulc_2010.copy()
-        urban_expand_2020 = (
-            (lulc_2010 == 2)
-            & (dist_to_center.reshape((h, w)) < 0.75)
-            & (rng.random(size=(h, w)) < 0.65)
-        )
-        green_loss_2020 = (lulc_2010 == 1) & (rng.random(size=(h, w)) < 0.30)
-        lulc_2020[urban_expand_2020] = 0
-        lulc_2020[green_loss_2020] = 0
-        lulc_2020[water_mask] = 3
-
-    else:
-        water_mask = (
-            (coords[:, 0] >= 35)
-            & (coords[:, 0] <= 85)
-            & (coords[:, 1] >= 15)
-            & (coords[:, 1] <= 45)
-        ).reshape((h, w))
-
-        lulc_2000 = np.full((h, w), 2, dtype=np.uint8)
-        lulc_2000[water_mask] = 3
-        lulc_2000[75:110, 20:60] = 1
-        lulc_2000[45:65, 55:75] = 0
-        lulc_2000[rng.random(size=(h, w)) < 0.08] = 4
-        lulc_2000[water_mask] = 3
-
-        lulc_2010 = lulc_2000.copy()
-        urban_expand_2010 = (
-            (lulc_2000 == 2)
-            & (dist_to_center.reshape((h, w)) < 0.45)
-            & (rng.random(size=(h, w)) < 0.40)
-        )
-        lulc_2010[urban_expand_2010] = 0
-        lulc_2010[water_mask] = 3
-
-        lulc_2020 = lulc_2010.copy()
-        urban_expand_2020 = (
-            (lulc_2010 == 2)
-            & (dist_to_center.reshape((h, w)) < 0.65)
-            & (rng.random(size=(h, w)) < 0.50)
-        )
-        green_loss_2020 = (
-            (lulc_2010 == 1)
-            & (coords[:, 0].reshape((h, w)) < 85)
-            & (rng.random(size=(h, w)) < 0.15)
-        )
-        lulc_2020[urban_expand_2020] = 0
-        lulc_2020[green_loss_2020] = 0
-        lulc_2020[water_mask] = 3
-
-    # Apply majority smoothing filter to reflect remote sensing spatial contiguity
-    lulc_2000 = apply_majority_filter(lulc_2000)
-    lulc_2010 = apply_majority_filter(lulc_2010)
-    lulc_2020 = apply_majority_filter(lulc_2020)
-
-    # 3. Spectral bands & indices synthesis calibrated by regional thermal profile
-    if "indore" in city_key:
-        built_tir, green_tir, farm_tir = 315.0, 299.0, 305.0
-    elif "kothri" in city_key or "ashta" in city_key:
-        built_tir, green_tir, farm_tir = 307.0, 296.0, 301.0
-    elif "sehore" in city_key:
-        built_tir, green_tir, farm_tir = 310.0, 297.0, 302.5
-    else:
-        built_tir, green_tir, farm_tir = 312.0, 298.0, 303.0
-
-    def generate_bands(lulc_map):
-        nir = np.where(
-            lulc_map == 1,
-            0.65,
-            np.where(
-                lulc_map == 2,
-                0.40,
-                np.where(lulc_map == 4, 0.28, np.where(lulc_map == 0, 0.18, 0.05)),
-            ),
-        ) + rng.normal(0, 0.03, size=(h, w))
-        red = np.where(
-            lulc_map == 1,
-            0.10,
-            np.where(
-                lulc_map == 2,
-                0.22,
-                np.where(lulc_map == 4, 0.30, np.where(lulc_map == 0, 0.28, 0.08)),
-            ),
-        ) + rng.normal(0, 0.02, size=(h, w))
-        swir1 = np.where(
-            lulc_map == 0, 0.38, np.where(lulc_map == 4, 0.42, np.where(lulc_map == 1, 0.12, 0.02))
-        ) + rng.normal(0, 0.02, size=(h, w))
-        green = np.where(lulc_map == 1, 0.18, np.where(lulc_map == 3, 0.22, 0.14)) + rng.normal(
-            0, 0.02, size=(h, w)
-        )
-        tir = np.where(
-            lulc_map == 0,
-            built_tir,
-            np.where(lulc_map == 1, green_tir, np.where(lulc_map == 4, farm_tir + 1.2, farm_tir)),
-        ) + rng.normal(0, 1.0, size=(h, w))
-        return (
-            np.clip(nir, 0.01, 1.0),
-            np.clip(red, 0.01, 1.0),
-            np.clip(swir1, 0.01, 1.0),
-            np.clip(green, 0.01, 1.0),
-            tir,
-        )
-
-    nir_20, red_20, swir_20, green_20, tir_20 = generate_bands(lulc_2020)
     ndvi_20 = compute_ndvi(nir_20, red_20)
     ndbi_20 = compute_ndbi(swir_20, nir_20)
     mndwi_20 = compute_mndwi(green_20, swir_20)
     ebbi_20 = compute_ebbi(swir_20, nir_20, tir_20)
-    lst_20 = tir_20 - 273.15  # Celsius
 
     # 4. Phase 3: Train and evaluate Random Forest with 4-Fold Spatial Cross-Validation
     features = np.column_stack(
@@ -339,13 +149,13 @@ def run_pipeline(
 
     # Area-adjusted accuracy (Olofsson et al. 2014):
     # Stratum weights W_i must come from the MAP prediction classes, not reference labels
-    total_area_ha = n_pixels * 0.09
     map_stratum_weights = np.bincount(predicted_rf_map.ravel(), minlength=5)[:5] / n_pixels
     area_adj_records = compute_area_adjusted_accuracy(
         rf_result["confusion_matrix"], map_stratum_weights, total_area_ha
     )
     df_area_adj = pd.DataFrame(area_adj_records)
     df_area_adj["class_name"] = [c.name for c in cfg.class_scheme[: len(df_area_adj)]]
+    df_area_adj["data_source"] = data_source_label
     df_area_adj.to_csv(run_dir / "tables" / "area_adjusted_accuracy.csv", index=False)
 
     # 5. Phase 3: Change Analysis (2000 -> 2010 -> 2020)
@@ -369,6 +179,7 @@ def run_pipeline(
     # Check Variance Inflation Factor (VIF) on the training driver matrix
     vifs = check_driver_collinearity_vif(drivers_train, driver_names)
     df_vif = pd.DataFrame(list(vifs.items()), columns=["Driver", "VIF"])
+    df_vif["data_source"] = data_source_label
     df_vif.to_csv(run_dir / "tables" / "driver_vif.csv", index=False)
     with open(run_dir / "metrics" / "driver_vif.json", "w", encoding="utf-8") as f:
         json.dump(vifs, f, indent=2)
@@ -496,45 +307,46 @@ def run_pipeline(
         {
             "Scenario": "2020 Baseline",
             "Year": 2020,
-            "Builtup_sqkm": round(float(np.sum(lulc_2020 == 0) * 0.09 / 100.0), 3),
-            "Green_sqkm": round(float(np.sum(lulc_2020 == 1) * 0.09 / 100.0), 3),
-            "Farmland_sqkm": round(float(np.sum(lulc_2020 == 2) * 0.09 / 100.0), 3),
-            "Bare_sqkm": round(float(np.sum(lulc_2020 == 4) * 0.09 / 100.0), 3),
+            "Builtup_sqkm": round(float(np.sum(lulc_2020 == 0) * pixel_area_ha / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(lulc_2020 == 1) * pixel_area_ha / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(lulc_2020 == 2) * pixel_area_ha / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(lulc_2020 == 4) * pixel_area_ha / 100.0), 3),
         },
         {
             "Scenario": "2030 BAU",
             "Year": 2030,
-            "Builtup_sqkm": round(float(np.sum(sim_2030_bau == 0) * 0.09 / 100.0), 3),
-            "Green_sqkm": round(float(np.sum(sim_2030_bau == 1) * 0.09 / 100.0), 3),
-            "Farmland_sqkm": round(float(np.sum(sim_2030_bau == 2) * 0.09 / 100.0), 3),
-            "Bare_sqkm": round(float(np.sum(sim_2030_bau == 4) * 0.09 / 100.0), 3),
+            "Builtup_sqkm": round(float(np.sum(sim_2030_bau == 0) * pixel_area_ha / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(sim_2030_bau == 1) * pixel_area_ha / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(sim_2030_bau == 2) * pixel_area_ha / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(sim_2030_bau == 4) * pixel_area_ha / 100.0), 3),
         },
         {
             "Scenario": "2030 GreenProtection",
             "Year": 2030,
-            "Builtup_sqkm": round(float(np.sum(sim_2030_prot == 0) * 0.09 / 100.0), 3),
-            "Green_sqkm": round(float(np.sum(sim_2030_prot == 1) * 0.09 / 100.0), 3),
-            "Farmland_sqkm": round(float(np.sum(sim_2030_prot == 2) * 0.09 / 100.0), 3),
-            "Bare_sqkm": round(float(np.sum(sim_2030_prot == 4) * 0.09 / 100.0), 3),
+            "Builtup_sqkm": round(float(np.sum(sim_2030_prot == 0) * pixel_area_ha / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(sim_2030_prot == 1) * pixel_area_ha / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(sim_2030_prot == 2) * pixel_area_ha / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(sim_2030_prot == 4) * pixel_area_ha / 100.0), 3),
         },
         {
             "Scenario": "2040 BAU",
             "Year": 2040,
-            "Builtup_sqkm": round(float(np.sum(sim_2040_bau == 0) * 0.09 / 100.0), 3),
-            "Green_sqkm": round(float(np.sum(sim_2040_bau == 1) * 0.09 / 100.0), 3),
-            "Farmland_sqkm": round(float(np.sum(sim_2040_bau == 2) * 0.09 / 100.0), 3),
-            "Bare_sqkm": round(float(np.sum(sim_2040_bau == 4) * 0.09 / 100.0), 3),
+            "Builtup_sqkm": round(float(np.sum(sim_2040_bau == 0) * pixel_area_ha / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(sim_2040_bau == 1) * pixel_area_ha / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(sim_2040_bau == 2) * pixel_area_ha / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(sim_2040_bau == 4) * pixel_area_ha / 100.0), 3),
         },
         {
             "Scenario": "2040 GreenProtection",
             "Year": 2040,
-            "Builtup_sqkm": round(float(np.sum(sim_2040_prot == 0) * 0.09 / 100.0), 3),
-            "Green_sqkm": round(float(np.sum(sim_2040_prot == 1) * 0.09 / 100.0), 3),
-            "Farmland_sqkm": round(float(np.sum(sim_2040_prot == 2) * 0.09 / 100.0), 3),
-            "Bare_sqkm": round(float(np.sum(sim_2040_prot == 4) * 0.09 / 100.0), 3),
+            "Builtup_sqkm": round(float(np.sum(sim_2040_prot == 0) * pixel_area_ha / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(sim_2040_prot == 1) * pixel_area_ha / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(sim_2040_prot == 2) * pixel_area_ha / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(sim_2040_prot == 4) * pixel_area_ha / 100.0), 3),
         },
     ]
     df_scenarios = pd.DataFrame(scenarios_data)
+    df_scenarios["data_source"] = data_source_label
     df_scenarios.to_csv(run_dir / "tables" / "scenario_projections.csv", index=False)
 
     # 9. Phase 7: Planning Map, Bivariate Decision Matrix & Planning Units
@@ -551,10 +363,12 @@ def run_pipeline(
     recs = load_sourced_recommendations("configs/recommendations.yaml")
 
     # Evaluate recommendations to generate Planning Unit summaries
+    grid_cells = max(1, int(round(cfg.planning_grid_size_m / pixel_size_m)))
     planning_units = evaluate_planning_units(
-        priority_map, risk_cat, heat_cat, valid_mask, recs, grid_size_cells=4
+        priority_map, risk_cat, heat_cat, valid_mask, recs, grid_size_cells=grid_cells
     )
     df_pu = pd.DataFrame(planning_units)
+    df_pu["data_source"] = data_source_label
     df_pu.to_csv(run_dir / "tables" / "planning_units.csv", index=False)
 
     # 10. Generate Figures & Artifacts
@@ -664,6 +478,7 @@ def run_pipeline(
 
     # Save Tables & Metrics
     df_acc = pd.DataFrame(rf_result["metrics"]["classes"])
+    df_acc["data_source"] = data_source_label
     df_acc.to_csv(run_dir / "tables" / "accuracy_rf.csv", index=False)
 
     df_trans_00_10 = pd.DataFrame(
@@ -671,6 +486,7 @@ def run_pipeline(
         columns=[c.name for c in cfg.class_scheme],
         index=[c.name for c in cfg.class_scheme],
     )
+    df_trans_00_10["data_source"] = data_source_label
     df_trans_00_10.to_csv(run_dir / "tables" / "transitions_2000_2010.csv")
 
     df_trans = pd.DataFrame(
@@ -678,6 +494,7 @@ def run_pipeline(
         columns=[c.name for c in cfg.class_scheme],
         index=[c.name for c in cfg.class_scheme],
     )
+    df_trans["data_source"] = data_source_label
     df_trans.to_csv(run_dir / "tables" / "transitions_2010_2020.csv")
 
     with open(run_dir / "metrics" / "accuracy.json", "w", encoding="utf-8") as f:
@@ -693,10 +510,10 @@ def run_pipeline(
         json.dump(clean_reg, f, indent=2)
 
     # 11. Create Headline Summary
-    green_00_ha = float(np.sum(lulc_2000 == 1) * 0.09)
-    green_20_ha = float(np.sum(lulc_2020 == 1) * 0.09)
-    built_growth_ha = float((np.sum(lulc_2020 == 0) - np.sum(lulc_2000 == 0)) * 0.09)
-    high_priority_ha = float(np.sum(priority_map == 1) * 0.09)
+    green_00_ha = float(np.sum(lulc_2000 == 1) * pixel_area_ha)
+    green_20_ha = float(np.sum(lulc_2020 == 1) * pixel_area_ha)
+    built_growth_ha = float((np.sum(lulc_2020 == 0) - np.sum(lulc_2000 == 0)) * pixel_area_ha)
+    high_priority_ha = float(np.sum(priority_map == 1) * pixel_area_ha)
 
     summary = RunSummary(
         run_id=run_id,
@@ -764,7 +581,7 @@ def run_pipeline(
             max_lat=round(max(lats), 4),
         )
     else:
-        bounds = BoundingBox(min_lon=77.25, min_lat=23.12, max_lon=77.58, max_lat=23.38)
+        bounds = inputs.bounds
 
     create_manifest(
         run_dir=run_dir,
