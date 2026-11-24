@@ -6,10 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from greenplan.config import load_pipeline_config
 from greenplan.io.data_provider import (
     PipelineInputs,
-    generate_synthetic_inputs,
     load_real_inputs,
 )
 from greenplan.pipeline import run_pipeline
@@ -68,21 +66,6 @@ def test_load_real_inputs_complete_contract(tmp_path: Path):
     assert np.isclose(inputs.lst_2020[0, 0], 31.85, atol=0.01)
     assert inputs.pixel_size_m == 30.0
     assert inputs.pixel_area_ha == 0.09
-
-
-def test_generate_synthetic_inputs():
-    """Test synthetic inputs generator returns complete PipelineInputs."""
-    cfg = load_pipeline_config("configs/pipeline.yaml")
-    rng = np.random.default_rng(42)
-
-    inputs = generate_synthetic_inputs(cfg, rng)
-    assert isinstance(inputs, PipelineInputs)
-    assert inputs.data_source == "synthetic_scaffold_testing"
-    assert inputs.lulc_2000.shape == (120, 120)
-    assert inputs.lulc_2010.shape == (120, 120)
-    assert inputs.lulc_2020.shape == (120, 120)
-    assert set(inputs.bands_2020.keys()) == {"nir", "red", "swir1", "green", "tir"}
-    assert inputs.lst_2020.shape == (120, 120)
 
 
 def test_pipeline_raises_on_missing_real_data(tmp_path: Path):

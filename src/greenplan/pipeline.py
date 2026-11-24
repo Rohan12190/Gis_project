@@ -14,12 +14,10 @@ import pandas as pd
 
 from greenplan.api.schemas import ArtifactRecord, BoundingBox, RunSummary
 from greenplan.classification.change_analysis import compute_transition_stats
-from greenplan.classification.random_forest import train_and_evaluate_rf
 from greenplan.config import load_pipeline_config
-from greenplan.gee.indices import compute_ebbi, compute_mndwi, compute_ndbi, compute_ndvi
+from greenplan.gee.indices import compute_ndvi
 from greenplan.io.data_provider import (
     PipelineInputs,
-    generate_synthetic_inputs,
     load_real_inputs,
 )
 from greenplan.io.manifest import calculate_sha256, create_manifest
@@ -67,12 +65,14 @@ def run_pipeline(
     Parameters:
         config_path: Path to pipeline YAML configuration.
         run_id: Unique run identifier (defaults to timestamp).
-        synthetic_mode: When True, runs synthetic landscape simulation for unit testing.
-                        When False, uses verified regional satellite data if available,
-                        or falls back to synthetic calibration with an explicit logged banner.
+        synthetic_mode: Deprecated. Must be False.
         max_pixels: Safety limit for max raster cells (overrides config).
         working_pixel_size_m: Coarse aggregation resolution in meters (overrides config).
+        preloaded_inputs: Pre-loaded empirical pipeline inputs container.
     """
+    if synthetic_mode:
+        raise ValueError("Synthetic mode has been decommissioned. GreenPlan operates strictly on real satellite data.")
+
     cfg = load_pipeline_config(config_path)
     if max_pixels is not None:
         cfg.max_pixels = max_pixels
@@ -96,17 +96,14 @@ def run_pipeline(
 
     if preloaded_inputs is not None:
         inputs = preloaded_inputs
-    elif not synthetic_mode:
+    else:
         if not has_real_rasters:
             raise FileNotFoundError(
                 f"Empirical satellite data directory not found or incomplete: '{data_dir}'. "
-                f"To run in empirical mode, acquire rasters according to docs/data_contract.md or run "
-                f"`python scripts/export_gee_composites.py --city {city_key}`. "
-                f"Alternatively, pass `--synthetic` to run the synthetic calibration scaffold."
+                f"Acquire rasters according to docs/data_contract.md or run "
+                f"`python scripts/build_empirical_dataset.py --city {city_key}`."
             )
         inputs = load_real_inputs(data_dir)
-    else:
-        inputs = generate_synthetic_inputs(cfg, rng)
 
     lulc_2000 = inputs.lulc_2000
     lulc_2010 = inputs.lulc_2010
@@ -157,110 +154,61 @@ def run_pipeline(
 
     nir_20 = bands_2020["nir"]
     red_20 = bands_2020["red"]
-    swir_20 = bands_2020["swir1"]
-    green_20 = bands_2020["green"]
-    tir_20 = bands_2020["tir"]
 
     ndvi_20 = compute_ndvi(nir_20, red_20)
-    ndbi_20 = compute_ndbi(swir_20, nir_20)
-    mndwi_20 = compute_mndwi(green_20, swir_20)
-    ebbi_20 = compute_ebbi(swir_20, nir_20, tir_20)
 
     # 4. Phase 3: Classification Accuracy Assessment
     # In empirical mode, we evaluate against an independent proxy reference (ESA WorldCover 2020)
     # rather than circularly retraining on labels produced from the same spectral bands.
-    is_empirical = inputs.data_source == "empirical_satellite_data"
-    accuracy_ref_desc = (
-        "ESA WorldCover 2020 (proxy reference)"
-        if is_empirical
-        else "Synthetic Ground Truth (Scaffold Benchmark)"
+    accuracy_ref_desc = "ESA WorldCover 2020 (proxy reference)"
+
+    missing_refs = []
+    if inputs.reference_2020 is None:
+        missing_refs.append("reference_2020.npy")
+    if inputs.reference_metrics is None:
+        missing_refs.append("accuracy_reference.json")
+    if missing_refs:
+        raise ValueError(
+            f"Empirical satellite mode requires both 'reference_2020.npy' and 'accuracy_reference.json' in '{data_dir}'. "
+            f"Missing: {missing_refs}. Independent WorldCover reference files are produced by running "
+            f"`python scripts/build_empirical_dataset.py --city {city_key}`."
+        )
+
+    ref_metrics = (
+        inputs.reference_metrics.get("metrics")
+        or inputs.reference_metrics.get("spatial_block_cv")
+        or inputs.reference_metrics
     )
+    required_keys = ["overall_accuracy", "kappa", "classes"]
+    missing_keys = [k for k in required_keys if k not in ref_metrics]
+    if missing_keys:
+        raise ValueError(
+            f"Invalid reference_metrics in '{data_dir}': missing required keys: {missing_keys}. "
+            f"Expected keys: {required_keys}. Re-run `python scripts/build_empirical_dataset.py --city {city_key}`."
+        )
 
-    if is_empirical:
-        missing_refs = []
-        if inputs.reference_2020 is None:
-            missing_refs.append("reference_2020.npy")
-        if inputs.reference_metrics is None:
-            missing_refs.append("accuracy_reference.json")
-        if missing_refs:
-            raise ValueError(
-                f"Empirical satellite mode requires both 'reference_2020.npy' and 'accuracy_reference.json' in '{data_dir}'. "
-                f"Missing: {missing_refs}. Independent WorldCover reference files are produced by running "
-                f"`python scripts/build_empirical_dataset.py --city {city_key}`."
-            )
+    rf_result = {
+        "metrics": ref_metrics,
+        "feature_importances": inputs.reference_metrics.get("feature_importances", {}),
+    }
+    predicted_rf_map = lulc_2020.copy()
 
-        ref_metrics = (
-            inputs.reference_metrics.get("metrics")
-            or inputs.reference_metrics.get("spatial_block_cv")
-            or inputs.reference_metrics
-        )
-        required_keys = ["overall_accuracy", "kappa", "classes"]
-        missing_keys = [k for k in required_keys if k not in ref_metrics]
-        if missing_keys:
-            raise ValueError(
-                f"Invalid reference_metrics in '{data_dir}': missing required keys: {missing_keys}. "
-                f"Expected keys: {required_keys}. Re-run `python scripts/build_empirical_dataset.py --city {city_key}`."
-            )
-
-        rf_result = {
-            "metrics": ref_metrics,
-            "feature_importances": inputs.reference_metrics.get("feature_importances", {}),
-        }
-        predicted_rf_map = lulc_2020.copy()
-
-        # Area-adjusted accuracy (Olofsson et al. 2014) evaluated against independent proxy reference
-        ref_flat = inputs.reference_2020.ravel()
-        valid_ref_mask = ref_flat >= 0
-        pred_flat = predicted_rf_map.ravel()
-        sampled_indices = sample_reference_points(
-            predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
-        )
-        sampled_valid = [idx for idx in sampled_indices if valid_ref_mask[idx]]
-        if len(sampled_valid) < 20:
-            sampled_valid = np.flatnonzero(valid_ref_mask)
-            if len(sampled_valid) > 250:
-                sampled_valid = rng.choice(sampled_valid, size=250, replace=False).tolist()
-        sample_cm = compute_confusion_matrix(
-            ref_flat[sampled_valid], pred_flat[sampled_valid], num_classes=5
-        )
-        sampled_indices = sampled_valid
-    else:
-        # Synthetic mode: train RF on synthetic labels for algorithm mechanics verification
-        features = np.column_stack(
-            [
-                nir_20.ravel(),
-                red_20.ravel(),
-                swir_20.ravel(),
-                green_20.ravel(),
-                ndvi_20.ravel(),
-                ndbi_20.ravel(),
-                mndwi_20.ravel(),
-                ebbi_20.ravel(),
-            ]
-        )
-        feature_names = ["NIR", "Red", "SWIR1", "Green", "NDVI", "NDBI", "MNDWI", "EBBI"]
-        labels = lulc_2020.ravel()
-
-        rf_result = train_and_evaluate_rf(
-            features,
-            labels,
-            coords,
-            feature_names,
-            n_estimators=cfg.rf_num_trees,
-            min_samples_split=cfg.rf_min_split,
-            num_classes=5,
-            seed=cfg.random_seed,
-        )
-        predicted_rf_map = rf_result["model"].predict(features).reshape((h, w))
-
-        sampled_indices = sample_reference_points(
-            predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
-        )
-        sample_cm = compute_confusion_matrix(
-            lulc_2020.ravel()[sampled_indices],
-            predicted_rf_map.ravel()[sampled_indices],
-            num_classes=5,
-        )
+    # Area-adjusted accuracy (Olofsson et al. 2014) evaluated against independent proxy reference
+    ref_flat = inputs.reference_2020.ravel()
+    valid_ref_mask = ref_flat >= 0
+    pred_flat = predicted_rf_map.ravel()
+    sampled_indices = sample_reference_points(
+        predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
+    )
+    sampled_valid = [idx for idx in sampled_indices if valid_ref_mask[idx]]
+    if len(sampled_valid) < 20:
+        sampled_valid = np.flatnonzero(valid_ref_mask)
+        if len(sampled_valid) > 250:
+            sampled_valid = rng.choice(sampled_valid, size=250, replace=False).tolist()
+    sample_cm = compute_confusion_matrix(
+        ref_flat[sampled_valid], pred_flat[sampled_valid], num_classes=5
+    )
+    sampled_indices = sampled_valid
 
     map_stratum_weights = np.bincount(predicted_rf_map.ravel(), minlength=5)[:5] / n_pixels
     area_adj_records = compute_area_adjusted_accuracy(
@@ -277,12 +225,7 @@ def run_pipeline(
     change_10_20 = compute_transition_stats(lulc_2010, lulc_2020, num_classes=5)
 
     # 6. Phase 4: Spatial Drivers, Multicollinearity (VIF) & Data-Driven Suitability Modeling
-    if is_empirical:
-        road_mask = inputs.road_mask
-    else:
-        road_mask = np.zeros((h, w), dtype=bool)
-        road_mask[:, 60] = True  # North-South highway
-        road_mask[50, :] = True  # East-West bypass
+    road_mask = inputs.road_mask
 
     driver_names = (
         ["Prox_Roads", "Prox_Built", "Prox_Water"]

@@ -44,8 +44,8 @@ class ClassSchemeItem(BaseModel):
 class AOIConfig(BaseModel):
     """Area of Interest definition."""
 
-    name: str = Field(..., min_length=1)
-    geojson_path: str = Field(..., description="Relative path to AOI GeoJSON file")
+    name: str = Field("Regional Study Area", min_length=1)
+    geojson_path: str = Field("", description="Optional relative path to AOI GeoJSON file")
     buffer_meters: float = Field(0.0, ge=0.0)
 
 
@@ -56,6 +56,41 @@ class ScenarioConfig(BaseModel):
     description: str
     protection_mask: bool = False
     green_protection_buffer_m: float = 0.0
+
+
+class RegionConfig(BaseModel):
+    """Regional configuration for boundary clipping and multi-temporal analysis."""
+
+    name: str = Field(..., min_length=1)
+    boundary_asset: str = Field(..., min_length=1)
+    filter_field: str = Field("ADM1_NAME")
+    filter_value: str = Field(..., min_length=1)
+    default_checkpoints: List[int] = Field(
+        default_factory=lambda: [2000, 2004, 2008, 2012, 2016, 2020, 2025]
+    )
+    default_radius_km: float = Field(10.0, ge=1.0, le=50.0)
+    max_radius_km: float = Field(25.0, ge=1.0, le=100.0)
+
+    @field_validator("default_checkpoints")
+    @classmethod
+    def validate_checkpoints(cls, v: List[int]) -> List[int]:
+        if len(v) < 2:
+            raise ValueError("At least 2 checkpoints are required.")
+        if v != sorted(v):
+            raise ValueError("Checkpoints must be sorted in ascending order.")
+        return v
+
+
+def load_region_config(config_path: Path | str = "configs/region.yaml") -> RegionConfig:
+    """Load and validate region configuration YAML."""
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Region configuration file not found: {path.resolve()}")
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if "region" in data and isinstance(data["region"], dict):
+        return RegionConfig(**data["region"])
+    return RegionConfig(**data)
 
 
 class TriggerConfig(BaseModel):

@@ -1,0 +1,10 @@
+# Regional Configuration for GreenPlan Real-Data GIS
+# Changing this configuration allows expanding or shifting the region without code modifications.
+region:
+  name: "Madhya Pradesh"
+  boundary_asset: "FAO/GAUL/2015/level1"
+  filter_field: "ADM1_NAME"
+  filter_value: "Madhya Pradesh"
+  default_checkpoints: [2000, 2004, 2008, 2012, 2016, 2020, 2025]
+  default_radius_km: 10.0
+  max_radius_km: 25.0

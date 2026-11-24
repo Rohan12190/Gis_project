@@ -3,18 +3,22 @@ random_seed: 42
 projected_crs: "EPSG:32643"
 
 study_area:
-  name: "Bhopal"
-  geojson_path: "configs/aoi/bhopal.geojson"
-  buffer_meters: 1000.0
+  name: "Regional Analysis"
+  geojson_path: ""
+  buffer_meters: 0.0
 
 epochs:
   - 2000
-  - 2010
+  - 2004
+  - 2008
+  - 2012
+  - 2016
   - 2020
+  - 2025
 
 projection_years:
-  - 2030
-  - 2040
+  - 2035
+  - 2045
 
 class_scheme:
   - id: 0
@@ -32,7 +36,7 @@ class_scheme:
   - id: 3
     name: "Water"
     color: "#2980b9"
-    description: "Upper Lake (Bhojtal), Lower Lake, wetlands, rivers, retention reservoirs"
+    description: "Natural lakes, wetlands, rivers, retention reservoirs"
   - id: 4
     name: "Bare land"
     color: "#95a5a6"
@@ -40,7 +44,7 @@ class_scheme:
 
 composite_window:
   start: "03-01"
-  end: "05-15"
+  end: "05-31"
 
 lst_window:
   start: "04-01"
@@ -49,4 +53,3 @@ lst_window:
 planning_grid_size_m: 500.0
 rf_num_trees: 100
 rf_min_split: 2
-

@@ -1,6 +1,26 @@
 # GreenPlan Codebase Refactoring & Defensibility Changelog
 
-## Task 1: Suitability Model Leakage Elimination & CV Evaluation
+## Rebuild Phase 0: Pure Real-Data Migration, Branch Setup & Pure Algorithm Porting
+- **Branch:** `rebuild/real-gis` (backed up pristine state on `backup/main-before-rebuild`).
+- **Deleted Deprecated Paths (git rm):**
+  - `src/greenplan/viewer.py` (legacy template-based monolithic dashboard)
+  - `src/greenplan/gee_presets.json` (hardcoded presets)
+  - `configs/pipeline_indore.yaml`, `configs/pipeline_kothri.yaml`, `configs/pipeline_sehore.yaml` (per-city configs removed; region is now place-agnostic)
+  - `configs/aoi/bhopal.geojson`, `configs/aoi/indore.geojson`, `configs/aoi/kothri.geojson`, `configs/aoi/sehore.geojson` (hardcoded AOIs removed)
+  - `docs/phase_reports/phase_3.md`, `phase_4_5.md`, `phase_6.md`, `phase_7_8_9.md` (synthetic report numbers purged)
+  - `generate_synthetic_inputs()` in `src/greenplan/io/data_provider.py` (purged synthetic landscape simulation)
+- **Pure Algorithm Ported Modules (Verified against Unit Tests):**
+  - `src/greenplan/validation/metrics.py`: Confusion matrix, Olofsson area-adjusted accuracy, stratified reference sampling, Pontius Figure of Merit & Kappa components.
+  - `src/greenplan/simulation/markov.py`: Transition matrix estimation, probability scaling, target area projections.
+  - `src/greenplan/simulation/ca.py`: Exact quota cellular automata allocation.
+  - `src/greenplan/simulation/suitability.py`: Spatial driver extraction without target leakage, VIF collinearity check, spatial-block CV suitability modeling.
+  - `src/greenplan/planning/decision_matrix.py`: Zero-inflation-safe terciles, loss risk computation, robust thermal stress, structured recommendation rule matching.
+  - `src/greenplan/config.py`: Pydantic models with `RegionConfig` support.
+  - `configs/recommendations.yaml`: Structured policy action rules.
+  - `configs/worldcover_mapping.yaml`: ESA WorldCover 2020 remapping table.
+  - `src/greenplan/thermal/regression.py`: OLS regression, Moran's I spatial autocorrelation, Getis-Ord Gi* hotspot statistics.
+- **Added Files:**
+  - `configs/region.yaml`: Madhya Pradesh region configuration (`FAO/GAUL/2015/level1`), default checkpoints `[2000, 2004, 2008, 2012, 2016, 2020, 2025]`.
 - **Files Modified:** `src/greenplan/simulation/suitability.py`, `src/greenplan/pipeline.py`
 - **Changes:**
   - Implemented `extract_spatial_drivers()`: training drivers derive strictly from `lulc_2000 == 0` (pre-transition state), eliminating target leakage where cells already built in 2010 had distance 0.

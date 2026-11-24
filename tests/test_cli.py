@@ -11,11 +11,11 @@ runner = CliRunner()
 
 
 def test_cli_validate_config():
-    """CLI validate-config should successfully validate pipeline.yaml."""
-    res = runner.invoke(app, ["validate-config", "--config", "configs/pipeline.yaml"])
+    """CLI validate-config should successfully validate pipeline.yaml and region.yaml."""
+    res = runner.invoke(app, ["validate-config", "--config", "configs/pipeline.yaml", "--region", "configs/region.yaml"])
     assert res.exit_code == 0
-    assert "Configuration valid!" in res.stdout
-    assert "Bhopal" in res.stdout
+    assert "Region Configuration Valid!" in res.stdout
+    assert "Madhya Pradesh" in res.stdout
 
 
 def test_cli_dead_subcommands_removed():
