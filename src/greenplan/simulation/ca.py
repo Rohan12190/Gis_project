@@ -149,4 +149,20 @@ def allocate_cellular_automata(
         final_counts = np.bincount(simulated.ravel()[unconstrained_idx], minlength=num_classes)[:num_classes]
         final_deficit = quota_unconstrained - final_counts
 
+    # Verify actual count against target_counts
+    actual_final = np.bincount(simulated.ravel(), minlength=num_classes)[:num_classes]
+    count_diff = np.abs(actual_final - target_counts)
+    max_diff_pct = float(np.max(count_diff / np.maximum(1, target_counts)))
+
+    if max_diff_pct > 0.01:
+        import warnings
+
+        warnings.warn(
+            f"CA allocation discrepancy exceeds 1% of class area: "
+            f"max_discrepancy={max_diff_pct:.2%}, actual={actual_final.tolist()}, "
+            f"target={target_counts.tolist()}",
+            UserWarning,
+            stacklevel=2,
+        )
+
     return simulated

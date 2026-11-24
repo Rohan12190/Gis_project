@@ -253,6 +253,21 @@ def run_pipeline(
     counts_00_10, p_00_10 = compute_transition_matrix(lulc_2000, lulc_2010, num_classes=5)
     target_2020_pixels = project_target_areas(lulc_2010, p_00_10, num_classes=5)
 
+    # Multi-seed sensitivity validation (5 seeds)
+    val_seeds = [cfg.random_seed + i for i in range(5)]
+    val_runs = []
+    for s in val_seeds:
+        sim_s = allocate_cellular_automata(
+            initial_map=lulc_2010,
+            target_counts=target_2020_pixels,
+            suitability_maps=suitability_maps_2010,
+            constraint_mask=~water_mask,
+            random_seed=s,
+        )
+        fom_s = compute_figure_of_merit(lulc_2010, lulc_2020, sim_s, target_class=0)
+        val_runs.append(fom_s)
+
+    # Primary simulation map uses the baseline seed
     sim_2020 = allocate_cellular_automata(
         initial_map=lulc_2010,
         target_counts=target_2020_pixels,
@@ -260,54 +275,106 @@ def run_pipeline(
         constraint_mask=~water_mask,
         random_seed=cfg.random_seed,
     )
+    np.save(run_dir / "rasters" / "sim_2020_validation.npy", sim_2020)
+    fom_res = val_runs[0]
 
-    fom_res = compute_figure_of_merit(lulc_2010, lulc_2020, sim_2020, target_class=0)
+    # Multi-seed aggregated validation metrics
+    fom_metrics = {
+        "multi_seed_runs": len(val_seeds),
+        "seeds": val_seeds,
+        "figure_of_merit": {
+            "mean": float(np.mean([r["figure_of_merit"] for r in val_runs])),
+            "std": float(np.std([r["figure_of_merit"] for r in val_runs])),
+        },
+        "kappa_location": {
+            "mean": float(np.mean([r["kappa_location"] for r in val_runs])),
+            "std": float(np.std([r["kappa_location"] for r in val_runs])),
+        },
+        "kappa_quantity": {
+            "mean": float(np.mean([r["kappa_quantity"] for r in val_runs])),
+            "std": float(np.std([r["kappa_quantity"] for r in val_runs])),
+        },
+        "quantity_disagreement": {
+            "mean": float(np.mean([r["quantity_disagreement"] for r in val_runs])),
+            "std": float(np.std([r["quantity_disagreement"] for r in val_runs])),
+        },
+        "allocation_disagreement": {
+            "mean": float(np.mean([r["allocation_disagreement"] for r in val_runs])),
+            "std": float(np.std([r["allocation_disagreement"] for r in val_runs])),
+        },
+        "model_agreement": {
+            "mean": float(np.mean([r["model_agreement"] for r in val_runs])),
+            "std": float(np.std([r["model_agreement"] for r in val_runs])),
+        },
+        "null_model_agreement": fom_res["null_model_agreement"],
+        "beats_null_model": bool(
+            np.mean([r["model_agreement"] for r in val_runs]) > fom_res["null_model_agreement"]
+            and np.mean([r["figure_of_merit"] for r in val_runs]) > 0.0
+        ),
+        "primary_run": fom_res,
+    }
 
-    # Project to 2030 and 2040 under BAU vs GreenProtection scenarios
+    # Dynamic Scenario Projections driven by configs/scenarios.yaml and cfg.projection_years
+    # Stationarity Assumption Note: Transition probabilities are assumed time-invariant across projection horizon.
+    from greenplan.simulation.markov import load_scenarios_config
+    scenarios_list = load_scenarios_config("configs/scenarios.yaml")
+
     counts_10_20, p_10_20 = compute_transition_matrix(lulc_2010, lulc_2020, num_classes=5)
-    target_2030_pixels = project_target_areas(lulc_2020, p_10_20, num_classes=5)
+    recent_yr = cfg.epochs[-1]
+    prev_yr = cfg.epochs[-2]
+    dt = max(1, recent_yr - prev_yr)
 
-    p_10_20_scaled_20yr = scale_transition_matrix(p_10_20, power=2)
-    target_2040_pixels = project_target_areas(lulc_2020, p_10_20_scaled_20yr, num_classes=5)
+    sim_future_maps = {}
+    scenarios_data = [
+        {
+            "Scenario": "Baseline",
+            "Year": recent_yr,
+            "Builtup_sqkm": round(float(np.sum(lulc_2020 == 0) * pixel_area_ha / 100.0), 3),
+            "Green_sqkm": round(float(np.sum(lulc_2020 == 1) * pixel_area_ha / 100.0), 3),
+            "Farmland_sqkm": round(float(np.sum(lulc_2020 == 2) * pixel_area_ha / 100.0), 3),
+            "Bare_sqkm": round(float(np.sum(lulc_2020 == 4) * pixel_area_ha / 100.0), 3),
+        }
+    ]
 
-    # 2030 Business-As-Usual (BAU)
-    sim_2030_bau = allocate_cellular_automata(
-        initial_map=lulc_2020,
-        target_counts=target_2030_pixels,
-        suitability_maps=suitability_maps_2020,
-        constraint_mask=~water_mask,
-        random_seed=cfg.random_seed,
-    )
+    for proj_yr in cfg.projection_years:
+        step_count = max(1, int(round((proj_yr - recent_yr) / dt)))
+        p_scaled = scale_transition_matrix(p_10_20, power=step_count)
+        target_proj_pixels = project_target_areas(lulc_2020, p_scaled, num_classes=5)
 
-    # 2030 Green Protection (No conversion of existing green space or water bodies)
-    protected_mask = ~water_mask & (lulc_2020 != 1)
-    sim_2030_prot = allocate_cellular_automata(
-        initial_map=lulc_2020,
-        target_counts=target_2030_pixels,
-        suitability_maps=suitability_maps_2020,
-        constraint_mask=protected_mask,
-        random_seed=cfg.random_seed,
-    )
+        for scen in scenarios_list:
+            if scen.protection_mask:
+                scen_mask = ~water_mask & (lulc_2020 != 1)
+            else:
+                scen_mask = ~water_mask
 
-    # 2040 BAU
-    sim_2040_bau = allocate_cellular_automata(
-        initial_map=lulc_2020,
-        target_counts=target_2040_pixels,
-        suitability_maps=suitability_maps_2020,
-        constraint_mask=~water_mask,
-        random_seed=cfg.random_seed,
-    )
+            sim_map = allocate_cellular_automata(
+                initial_map=lulc_2020,
+                target_counts=target_proj_pixels,
+                suitability_maps=suitability_maps_2020,
+                constraint_mask=scen_mask,
+                random_seed=cfg.random_seed,
+            )
+            sim_future_maps[(proj_yr, scen.name)] = sim_map
+            raster_name = f"sim_{proj_yr}_{scen.name.lower()}.npy"
+            np.save(run_dir / "rasters" / raster_name, sim_map)
 
-    # 2040 Green Protection
-    sim_2040_prot = allocate_cellular_automata(
-        initial_map=lulc_2020,
-        target_counts=target_2040_pixels,
-        suitability_maps=suitability_maps_2020,
-        constraint_mask=protected_mask,
-        random_seed=cfg.random_seed,
-    )
+            scenarios_data.append(
+                {
+                    "Scenario": f"{proj_yr} {scen.name}",
+                    "Year": proj_yr,
+                    "Builtup_sqkm": round(float(np.sum(sim_map == 0) * pixel_area_ha / 100.0), 3),
+                    "Green_sqkm": round(float(np.sum(sim_map == 1) * pixel_area_ha / 100.0), 3),
+                    "Farmland_sqkm": round(float(np.sum(sim_map == 2) * pixel_area_ha / 100.0), 3),
+                    "Bare_sqkm": round(float(np.sum(sim_map == 4) * pixel_area_ha / 100.0), 3),
+                }
+            )
 
-    # Save all scenario simulation rasters
+    sim_2030_bau = sim_future_maps.get((2030, "BAU"), next(iter(sim_future_maps.values())))
+    sim_2030_prot = sim_future_maps.get((2030, "GreenProtection"), sim_2030_bau)
+    sim_2040_bau = sim_future_maps.get((2040, "BAU"), sim_2030_bau)
+    sim_2040_prot = sim_future_maps.get((2040, "GreenProtection"), sim_2040_bau)
+
+    # Save canonical named rasters for backwards compatibility
     np.save(run_dir / "rasters" / "sim_2030_bau.npy", sim_2030_bau)
     np.save(run_dir / "rasters" / "sim_2030_green_protection.npy", sim_2030_prot)
     np.save(run_dir / "rasters" / "sim_2040_bau.npy", sim_2040_bau)
@@ -520,7 +587,7 @@ def run_pipeline(
         json.dump(accuracy_output, f, indent=2)
 
     with open(run_dir / "metrics" / "simulation.json", "w", encoding="utf-8") as f:
-        json.dump(fom_res, f, indent=2)
+        json.dump(fom_metrics, f, indent=2)
 
     with open(run_dir / "metrics" / "thermal.json", "w", encoding="utf-8") as f:
         clean_reg = {k: v for k, v in lst_reg.items() if k != "residuals"}

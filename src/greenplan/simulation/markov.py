@@ -1,8 +1,12 @@
 """Markov chain transition probability matrix estimation and matrix scaling."""
 
-from typing import Tuple
+from pathlib import Path
+from typing import List, Tuple
 
 import numpy as np
+import yaml
+
+from greenplan.config import ScenarioConfig
 
 
 def compute_transition_matrix(
@@ -68,3 +72,19 @@ def project_target_areas(
         target_counts[np.argmax(projected - np.floor(projected))] += diff
 
     return target_counts
+
+
+def load_scenarios_config(yaml_path: Path | str = "configs/scenarios.yaml") -> List[ScenarioConfig]:
+    """Load simulation scenarios configuration from YAML.
+
+    Defines scenario specifications (protection masks, green buffer distances).
+    """
+    p = Path(yaml_path)
+    if not p.exists():
+        return [
+            ScenarioConfig(name="BAU", description="Business-As-Usual", protection_mask=False),
+            ScenarioConfig(name="GreenProtection", description="Green Protection", protection_mask=True),
+        ]
+    with open(p, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return [ScenarioConfig(**scen) for scen in data.get("scenarios", [])]

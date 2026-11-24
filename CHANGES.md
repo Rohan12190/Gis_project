@@ -44,3 +44,13 @@
   - Replaced `eval()` and silent exception catching in `decision_matrix.py` with `match_recommendation_trigger()` and strict validation in `load_sourced_recommendations()`.
   - Wired dynamic `planning_grid_size_m / pixel_size_m` into planning unit evaluation.
 - **Tests Added:** `tests/test_decision_matrix.py` (`test_match_recommendation_trigger`, `test_load_sourced_recommendations_valid_and_malformed`, `test_no_eval_or_exec_in_codebase`).
+
+## Task 6: CA-Markov Target Allocation, Multi-Seed Validation & Pontius Alignment
+- **Files Modified:** `src/greenplan/simulation/ca.py`, `src/greenplan/simulation/markov.py`, `src/greenplan/validation/metrics.py`, `src/greenplan/pipeline.py`
+- **Changes:**
+  - Added target allocation verification in `ca.py` warning if discrepancies exceed 1% of class area.
+  - Aligned `compute_figure_of_merit()` docstrings, variable naming, and return keys with Pontius et al. (2008): A (misses), B (hits), C (wrong-category), D (false alarms); added Pontius Quantity Disagreement and Allocation Disagreement.
+  - Loaded `configs/scenarios.yaml` dynamically in `markov.py` and `pipeline.py` to drive scenario simulations rather than hardcoding them.
+  - Computed future projection step sizes from `(proj_yr - recent_yr) / dt` with documented Markov stationarity assumptions.
+  - Implemented multi-seed sensitivity validation (5 seeds) reporting mean and standard deviation of FoM, $K_{\text{location}}$, $K_{\text{quantity}}$, Quantity Disagreement, Allocation Disagreement, and Null Model comparison to `metrics/simulation.json`.
+- **Tests Added:** `tests/test_ca.py` (`test_ca_exact_area_allocation_small_grid`, `test_multi_seed_simulation_reports_mean_and_std`), `tests/test_metrics.py` (`test_pontius_figure_of_merit_hand_worked_example`).

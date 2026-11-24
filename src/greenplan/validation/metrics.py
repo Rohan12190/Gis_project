@@ -169,10 +169,11 @@ def compute_figure_of_merit(
     where:
       A = Error due to observed change predicted as persistence (misses)
       B = Correct due to observed change predicted as change (hits)
-      C = Error due to observed persistence predicted as change (false alarms)
-      D = Error due to observed change predicted as change to wrong category (wrong category hits)
+      C = Error due to observed change predicted as change to wrong category (wrong category hits)
+      D = Error due to observed persistence predicted as change (false alarms)
 
-    Also computes Pontius Kappa components: K_standard, K_location, K_quantity.
+    Also computes Pontius Kappa components: K_standard, K_location, K_quantity,
+    along with Quantity Disagreement and Allocation Disagreement.
     """
     valid = (actual_t1 >= 0) & (actual_t2 >= 0) & (simulated_t2 >= 0)
     act_t1 = actual_t1[valid]
@@ -189,10 +190,7 @@ def compute_figure_of_merit(
     # A: Misses (observed change to target, but predicted persistence in initial non-target class)
     misses = int(np.sum(obs_changed_to_target & (sim_t2 == act_t1)))
 
-    # C: False alarms (observed persistence in non-target, predicted change to target)
-    false_alarms = int(np.sum((act_t1 == act_t2) & (act_t1 != target_class) & pred_changed_to_target))
-
-    # D: Wrong category hits (observed change to target but predicted change to another class,
+    # C: Wrong category hits (observed change to target but predicted change to third class,
     #    OR observed change to a third class but predicted change to target)
     wrong_category = int(
         np.sum(
@@ -201,7 +199,12 @@ def compute_figure_of_merit(
         )
     )
 
-    denominator = hits + misses + false_alarms + wrong_category
+    # D: False alarms (observed persistence in non-target, predicted change to target)
+    false_alarms = int(
+        np.sum((act_t1 == act_t2) & (act_t1 != target_class) & pred_changed_to_target)
+    )
+
+    denominator = misses + hits + wrong_category + false_alarms
     fom = float(hits / denominator) if denominator > 0 else 0.0
 
     # Agreement metrics
@@ -226,19 +229,30 @@ def compute_figure_of_merit(
         k_standard = float((p_o - p_c) / (1.0 - p_c)) if p_c < 1.0 else 1.0
         k_location = float((p_o - p_c) / (p_max - p_c)) if p_max > p_c else 0.0
         k_quantity = float((p_max - p_c) / (1.0 - p_c)) if p_c < 1.0 else 0.0
+
+        # Pontius quantity and allocation disagreement
+        q_disagreement = float(0.5 * np.sum(np.abs(r_sums - c_sums)))
+        alloc_disagreement = float(max(0.0, (1.0 - model_agreement) - q_disagreement))
     else:
         k_standard, k_location, k_quantity = 0.0, 0.0, 0.0
+        q_disagreement, alloc_disagreement = 0.0, 0.0
 
     return {
         "figure_of_merit": fom,
         "hits": hits,
         "misses": misses,
-        "false_alarms": false_alarms,
         "wrong_category": wrong_category,
+        "false_alarms": false_alarms,
+        "A_misses": misses,
+        "B_hits": hits,
+        "C_wrong_category": wrong_category,
+        "D_false_alarms": false_alarms,
         "model_agreement": model_agreement,
         "null_model_agreement": null_agreement,
-        "beats_null_model": bool(model_agreement > null_agreement),  # strict inequality
+        "beats_null_model": bool(model_agreement > null_agreement and fom > 0.0),
         "kappa_standard": k_standard,
         "kappa_location": k_location,
         "kappa_quantity": k_quantity,
+        "quantity_disagreement": q_disagreement,
+        "allocation_disagreement": alloc_disagreement,
     }

@@ -21,3 +21,13 @@ def test_pipeline_execution(tmp_path):
     df_scen = pd.read_csv(run_dir / "tables" / "scenario_projections.csv")
     assert "data_source" in df_scen.columns
     assert (df_scen["data_source"] == "synthetic_scaffold_testing").all()
+
+    import json
+    with open(run_dir / "metrics" / "simulation.json", "r", encoding="utf-8") as f:
+        sim_metrics = json.load(f)
+    assert "figure_of_merit" in sim_metrics
+    assert "mean" in sim_metrics["figure_of_merit"]
+    assert "std" in sim_metrics["figure_of_merit"]
+    assert sim_metrics["multi_seed_runs"] == 5
+    assert "quantity_disagreement" in sim_metrics
+    assert "allocation_disagreement" in sim_metrics

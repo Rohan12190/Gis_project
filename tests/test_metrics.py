@@ -125,3 +125,39 @@ def test_figure_of_merit_components():
     assert fom["wrong_category"] >= 0
     assert "beats_null_model" in fom
     assert isinstance(fom["beats_null_model"], bool)
+
+
+def test_pontius_figure_of_merit_hand_worked_example():
+    """Verify Pontius FoM components (A, B, C, D) and formula against exact hand-worked example."""
+    # 10 cells: initial classes
+    t1 = np.array([1, 1, 1, 1, 1, 1, 1, 1, 0, 0])
+    # Ground truth t2: 4 changed to 0 (cells 0..3), 2 persisted in 1 (cells 4,5), 2 changed to 2 (cells 6,7), 2 persisted in 0 (cells 8,9)
+    t2 = np.array([0, 0, 0, 0, 1, 1, 2, 2, 0, 0])
+    # Model simulation t2:
+    # Cell 0: 1->0 (Hit - B)
+    # Cell 1: 1->0 (Hit - B)
+    # Cell 2: 1->1 (Missed change to target - A)
+    # Cell 3: 1->2 (Wrong category - C)
+    # Cell 4: 1->0 (False alarm - D)
+    # Cell 5: 1->1 (Persistence)
+    # Cell 6: 1->0 (Wrong category - C)
+    # Cell 7: 1->2 (Persistence in non-target)
+    # Cells 8,9: 0->0 (Initial target persistence)
+    sim = np.array([0, 0, 1, 2, 0, 1, 0, 2, 0, 0])
+
+    res = compute_figure_of_merit(t1, t2, sim, target_class=0)
+
+    # Verify Pontius component counts
+    assert res["hits"] == 2  # B
+    assert res["misses"] == 1  # A
+    assert res["wrong_category"] == 2  # C
+    assert res["false_alarms"] == 1  # D
+    assert res["A_misses"] == 1
+    assert res["B_hits"] == 2
+    assert res["C_wrong_category"] == 2
+    assert res["D_false_alarms"] == 1
+
+    # FoM = B / (A + B + C + D) = 2 / (1 + 2 + 2 + 1) = 2 / 6 = 1/3
+    assert np.isclose(res["figure_of_merit"], 2.0 / 6.0, atol=1e-5)
+    assert "quantity_disagreement" in res
+    assert "allocation_disagreement" in res
