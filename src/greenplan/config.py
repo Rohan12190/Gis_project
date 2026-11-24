@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class WindowConfig(BaseModel):
@@ -58,22 +58,52 @@ class ScenarioConfig(BaseModel):
     green_protection_buffer_m: float = 0.0
 
 
+class TriggerConfig(BaseModel):
+    """Structured trigger condition matching planning unit characteristics."""
+
+    risk: List[str] = Field(default_factory=lambda: ["low", "medium", "high"])
+    heat: List[str] = Field(default_factory=lambda: ["low", "medium", "high"])
+    min_green_pct: Optional[float] = Field(None, ge=0.0, le=100.0)
+
+    @field_validator("risk", "heat")
+    @classmethod
+    def validate_levels(cls, v: List[str]) -> List[str]:
+        valid_levels = {"low", "medium", "high"}
+        if not v:
+            raise ValueError("Trigger level list cannot be empty")
+        for level in v:
+            if level not in valid_levels:
+                raise ValueError(
+                    f"Invalid risk/heat level '{level}'. Must be one of: {sorted(valid_levels)}"
+                )
+        return v
+
+
 class RecommendationsRule(BaseModel):
-    """Single environmental policy recommendation."""
+    """Single environmental policy recommendation with structured trigger condition."""
 
     id: str
     title: str
     severity: str = Field(..., pattern=r"^(critical|moderate|protect|good)$")
-    trigger_condition: str
-    actions: List[str]
+    trigger: TriggerConfig
+    actions: List[str] = Field(..., min_length=1)
     source: Optional[str] = None
     assumption: bool = False
 
-    @field_validator("source")
+    @field_validator("id", "title")
     @classmethod
-    def validate_source_or_assumption(cls, v: Optional[str], info) -> Optional[str]:
-        # Handled in root validator if needed
+    def validate_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Field cannot be empty")
         return v
+
+    @model_validator(mode="after")
+    def validate_source_or_assumption(self) -> "RecommendationsRule":
+        if not self.source and not self.assumption:
+            raise ValueError(
+                f"Rule '{self.id}' must provide either a 'source' citation or 'assumption: true'"
+            )
+        return self
 
 
 class PipelineConfig(BaseModel):

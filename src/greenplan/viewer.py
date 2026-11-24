@@ -230,13 +230,20 @@ def generate_html_report(run_dir: Path) -> Path:
     for r in recs_data:
         color = severity_colors.get(r.get("severity", "moderate"), "#3498db")
         actions_li = "".join(f"<li>{a}</li>" for a in r.get("actions", []))
+        trigger = r.get("trigger", {})
+        if isinstance(trigger, dict):
+            risk_desc = "/".join(trigger.get("risk", ["any"]))
+            heat_desc = "/".join(trigger.get("heat", ["any"]))
+            trig_str = f"Risk: [{risk_desc}] & Heat: [{heat_desc}]"
+        else:
+            trig_str = str(trigger)
         recs_cards_html += f"""
         <div class="card rec-card" style="border-left: 4px solid {color};">
             <div class="rec-header">
                 <span class="badge" style="background:{color};">{r.get("severity", "").upper()}</span>
                 <h3>{r.get("title")}</h3>
             </div>
-            <p class="rec-trigger"><strong>When triggered:</strong> <code>{r.get("trigger_condition")}</code></p>
+            <p class="rec-trigger"><strong>When triggered:</strong> <code>{trig_str}</code></p>
             <ul>{actions_li}</ul>
             <div class="rec-source"><strong>Scientific Source:</strong> {r.get("source")}</div>
         </div>

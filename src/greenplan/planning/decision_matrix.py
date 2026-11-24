@@ -1,7 +1,7 @@
 """Bivariate 3x3 planning matrix combining projected loss risk and thermal stress."""
 
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import yaml
@@ -204,17 +204,59 @@ def evaluate_planning_matrix(
     return priority_map, risk_cat, heat_cat, area_breakdown
 
 
+def match_recommendation_trigger(
+    trigger: Dict,
+    risk_level: str,
+    heat_level: str,
+    cell_summary: Optional[Dict] = None,
+) -> bool:
+    """Check if a planning unit matches a structured recommendation trigger rule.
+
+    Safe structured matching: strictly eliminates eval(), exec(), and string parsing.
+    """
+    allowed_risks = trigger.get("risk", ["low", "medium", "high"])
+    allowed_heats = trigger.get("heat", ["low", "medium", "high"])
+
+    if risk_level not in allowed_risks:
+        return False
+    if heat_level not in allowed_heats:
+        return False
+
+    min_green = trigger.get("min_green_pct")
+    if min_green is not None and cell_summary is not None:
+        current_green = cell_summary.get("green_pct", 0.0)
+        if current_green < min_green:
+            return False
+
+    return True
+
+
 def load_sourced_recommendations(yaml_path: Path | str) -> List[Dict]:
-    """Load policy recommendation rulebook and verify citation source or assumption flag."""
-    with open(yaml_path, "r", encoding="utf-8") as f:
+    """Load policy recommendation rulebook and validate against RecommendationsRule schema.
+
+    Fails loudly with detailed ValidationError if any rule is malformed, missing required fields,
+    or missing citation source/assumption flag.
+    """
+    from greenplan.config import RecommendationsRule
+
+    path = Path(yaml_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Recommendations rulebook not found: {path}")
+
+    with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    rules = data.get("recommendations", [])
-    for r in rules:
-        if not r.get("source") and not r.get("assumption"):
-            raise ValueError(
-                f"Rule '{r.get('id')}' must have either a 'source' citation or 'assumption: true'."
-            )
-    return rules
+
+    if not data or "recommendations" not in data:
+        raise ValueError(
+            f"Malformed recommendations file '{path}': missing 'recommendations' root key."
+        )
+
+    validated_rules = []
+    for raw_rule in data["recommendations"]:
+        rule_obj = RecommendationsRule(**raw_rule)
+        validated_rules.append(rule_obj.model_dump())
+
+    return validated_rules
 
 
 def evaluate_planning_units(
@@ -253,17 +295,12 @@ def evaluate_planning_units(
             priority_keys = list(DECISION_MATRIX.keys())
             pri_title = DECISION_MATRIX[priority_keys[maj_pri_val - 1]] if 1 <= maj_pri_val <= 9 else "Unclassified"
 
-            # Evaluate recommendations trigger condition
+            # Evaluate recommendations trigger condition safely without eval/exec
             matched_action_ids = []
-            env = {"risk": risk_str, "heat": heat_str}
             for rec in recommendations:
-                cond = rec.get("trigger_condition", "")
-                try:
-                    # Safely evaluate condition string in restricted env
-                    if eval(cond, {"__builtins__": {}}, env):
-                        matched_action_ids.append(rec.get("id"))
-                except Exception:
-                    pass
+                trigger = rec.get("trigger", {})
+                if match_recommendation_trigger(trigger, risk_str, heat_str):
+                    matched_action_ids.append(rec.get("id"))
 
             units.append(
                 {

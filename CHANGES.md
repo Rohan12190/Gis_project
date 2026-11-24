@@ -35,3 +35,12 @@
   - Built sample confusion matrix from stratified reference sample instead of full-raster pixel matrix, ensuring realistic and defensible confidence intervals per Olofsson et al. (2014).
   - Updated `pipeline.py` to preserve spatial-block CV for classifier performance (`pixel_cv`) while using the stratified sample for area adjustment (`area_adjusted_sample`), writing both to `metrics/accuracy.json`.
 - **Tests Added:** `tests/test_metrics.py` (`test_sample_reference_points`, `test_olofsson_hand_computed_ground_truth_and_ci_comparison`).
+
+## Task 5: Structured Recommendations Schema & Elimination of eval()
+- **Files Modified:** `configs/recommendations.yaml`, `src/greenplan/config.py`, `src/greenplan/planning/decision_matrix.py`, `src/greenplan/viewer.py`
+- **Changes:**
+  - Migrated `configs/recommendations.yaml` from raw string conditions to structured dictionary triggers: `{risk: [...], heat: [...], min_green_pct: ...}`.
+  - Added `TriggerConfig` Pydantic model in `config.py` validating valid levels (`low`, `medium`, `high`) and percentage bounds.
+  - Replaced `eval()` and silent exception catching in `decision_matrix.py` with `match_recommendation_trigger()` and strict validation in `load_sourced_recommendations()`.
+  - Wired dynamic `planning_grid_size_m / pixel_size_m` into planning unit evaluation.
+- **Tests Added:** `tests/test_decision_matrix.py` (`test_match_recommendation_trigger`, `test_load_sourced_recommendations_valid_and_malformed`, `test_no_eval_or_exec_in_codebase`).

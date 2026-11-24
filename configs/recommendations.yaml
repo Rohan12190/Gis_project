@@ -2,7 +2,9 @@ recommendations:
   - id: "REC_HIGH_HEAT_HIGH_RISK"
     title: "Urgent Green Corridor Designation & Permeable Mandates"
     severity: "critical"
-    trigger_condition: "risk == 'high' and heat == 'high'"
+    trigger:
+      risk: ["high"]
+      heat: ["high"]
     actions:
       - "Mandate 30% green area ratio on all new development site approvals."
       - "Establish legally binding ecological green corridors connecting fragmented canopy."
@@ -13,7 +15,9 @@ recommendations:
   - id: "REC_HIGH_HEAT_LOW_RISK"
     title: "Urban Heat Island Mitigation & Canopy Infill"
     severity: "critical"
-    trigger_condition: "risk == 'low' and heat == 'high'"
+    trigger:
+      risk: ["low"]
+      heat: ["high"]
     actions:
       - "Retrofit existing dense built-up zones with reflective cool roofs."
       - "Deploy pocket parks and vertical green walls on high-density residential blocks."
@@ -24,7 +28,9 @@ recommendations:
   - id: "REC_LOW_HEAT_HIGH_RISK"
     title: "Preventive Ecological Buffer & Buffer Zoning"
     severity: "moderate"
-    trigger_condition: "risk == 'high' and heat == 'low'"
+    trigger:
+      risk: ["high"]
+      heat: ["low"]
     actions:
       - "Enforce pre-construction environmental impact assessments on peripheral agricultural land."
       - "Mandate 50m riparian conservation buffers along wetlands and water bodies."
@@ -35,10 +41,11 @@ recommendations:
   - id: "REC_LOW_HEAT_LOW_RISK"
     title: "Long-term Ecological Monitoring & Community Stewardship"
     severity: "good"
-    trigger_condition: "risk == 'low' and heat == 'low'"
+    trigger:
+      risk: ["low"]
+      heat: ["low"]
     actions:
       - "Maintain baseline ecological monitoring and preserve existing water bodies."
       - "Promote community urban farming and micro-afforestation reserves."
     source: "Patel et al. (2024), Results in Engineering, 21, 101788"
     assumption: false
-
