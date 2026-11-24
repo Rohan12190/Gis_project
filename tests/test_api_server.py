@@ -74,3 +74,20 @@ def test_api_jobs_404_on_unknown():
     """Unknown job ID must return HTTP 404."""
     res = client.get("/api/jobs/nonexistent_job_12345")
     assert res.status_code == 404
+
+
+def test_static_ui_served():
+    """Verify that index.html and vendored assets are properly served for offline use."""
+    res_index = client.get("/")
+    assert res_index.status_code == 200
+    assert "GreenPlan GIS" in res_index.text
+
+    res_leaflet = client.get("/vendor/leaflet/leaflet.js")
+    assert res_leaflet.status_code == 200
+
+    res_css = client.get("/css/styles.css")
+    assert res_css.status_code == 200
+
+    res_js = client.get("/js/app.js")
+    assert res_js.status_code == 200
+

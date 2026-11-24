@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GreenPlan GIS | Real Earth Engine Satellite Planning</title>
+  
+  <!-- Vendored Leaflet CSS for 100% offline functionality -->
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css" />
+  
+  <!-- Custom styles -->
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="logo-badge">GREENPLAN</div>
+      <div class="title-group">
+        <h1>Empirical Urban Growth & Green Space Planning</h1>
+        <p>Satellite-derived spatial modeling on Google Earth Engine &mdash; Madhya Pradesh</p>
+      </div>
+    </div>
+    <div class="header-status">
+      <div id="status-badge" class="badge badge-offline">
+        <span class="dot"></span> Checking Status...
+      </div>
+    </div>
+  </header>
+
+  <!-- App Main Container -->
+  <div class="app-container">
+    
+    <!-- Left Sidebar: Controls & Layer Toggles -->
+    <aside class="sidebar">
+      
+      <!-- Study Area Selection -->
+      <div class="sidebar-section">
+        <h2>Study Area</h2>
+        <div class="quick-btn-group">
+          <button id="btn-bhopal" class="btn-secondary active">Bhopal (Saved)</button>
+          <button id="btn-kothri" class="btn-secondary">Kothri (Saved)</button>
+        </div>
+
+        <div class="form-group">
+          <label>Location Coordinates (WGS84)</label>
+          <div class="form-row">
+            <input type="text" id="input-lat" placeholder="Latitude" value="23.25" />
+            <input type="text" id="input-lon" placeholder="Longitude" value="77.41" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Analysis Radius (<span id="radius-val">15 km</span>)</label>
+          <div class="slider-group">
+            <input type="range" id="input-radius" min="5" max="25" step="1" value="15" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Label / Name</label>
+          <input type="text" id="input-name" placeholder="AOI Name" value="Bhopal" />
+        </div>
+
+        <button id="btn-analyze" class="btn-primary" style="width: 100%; margin-top: 4px;">
+          Run Satellite Analysis
+        </button>
+
+        <!-- Progress Box -->
+        <div id="progress-box" class="progress-container">
+          <div class="progress-bar-bg">
+            <div id="progress-bar" class="progress-bar-fill"></div>
+          </div>
+          <div id="progress-status-text" class="progress-status">Submitting job...</div>
+        </div>
+      </div>
+
+      <!-- Layer Selection -->
+      <div class="sidebar-section">
+        <h2>Spatial Overlays</h2>
+        <div class="layer-select">
+          <div class="layer-item active" data-layer="planning_priority">
+            <span class="layer-label">3&times;3 Planning Matrix</span>
+          </div>
+          <div class="layer-item" data-layer="thermal_hotspots">
+            <span class="layer-label">Thermal Hotspots (Gi*)</span>
+          </div>
+          <div class="layer-item" data-layer="urban_growth">
+            <span class="layer-label">Urban Expansion</span>
+          </div>
+          <div class="layer-item" data-layer="lulc_recent">
+            <span class="layer-label">Recent LULC (2025)</span>
+          </div>
+          <div class="layer-item" data-layer="lulc_baseline">
+            <span class="layer-label">Baseline LULC (2000)</span>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 8px;">
+          <label>Layer Opacity</label>
+          <input type="range" id="input-opacity" min="0.1" max="1.0" step="0.05" value="0.85" />
+        </div>
+
+        <div style="margin-top: 12px;">
+          <label style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 6px;">Legend</label>
+          <div id="legend-container"></div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Right Main Dashboard -->
+    <main class="dashboard-content">
+      
+      <!-- Interactive Leaflet Map -->
+      <div class="map-container-wrapper">
+        <div id="map"></div>
+        <div class="map-floating-info">
+          Click map inside Madhya Pradesh to inspect or analyze custom AOI
+        </div>
+      </div>
+
+      <!-- KPI Summary Cards -->
+      <section class="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-title">Baseline Green Cover (2000)</div>
+          <div id="kpi-baseline-green" class="kpi-value">--</div>
+          <div class="kpi-sub">Total vegetation ratio</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">Recent Green Cover (2025)</div>
+          <div id="kpi-recent-green" class="kpi-value">--</div>
+          <div class="kpi-sub">Current canopy & grass</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">Net Green Change</div>
+          <div id="kpi-net-green" class="kpi-value">--</div>
+          <div class="kpi-sub">2000 &rarr; 2025 transition</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">Built-up Expansion</div>
+          <div id="kpi-urban-growth" class="kpi-value">--</div>
+          <div class="kpi-sub">New impermeable surface</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">Mean LST (Recent)</div>
+          <div id="kpi-mean-lst" class="kpi-value">--</div>
+          <div class="kpi-sub">Thermal infrared surface temp</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">High-Priority Conservation</div>
+          <div id="kpi-conservation-priority" class="kpi-value">--</div>
+          <div class="kpi-sub">High risk + high heat stress</div>
+        </div>
+      </section>
+
+      <!-- Charts & Decision Matrix Section -->
+      <section class="analytics-grid">
+        
+        <!-- Annual NDVI Trend Chart -->
+        <div class="card">
+          <h3>
+            Historical Greenness Trend (NDVI)
+            <span class="card-subtitle">Landsat 5 / 7 / 8 / 9 (2000&ndash;2025)</span>
+          </h3>
+          <div id="trend-chart-container" class="chart-container"></div>
+        </div>
+
+        <!-- Future Projections Chart -->
+        <div class="card">
+          <h3>
+            2035 CA-Markov Scenario Projections
+            <span class="card-subtitle">BAU vs. Conservation vs. Infill</span>
+          </h3>
+          <div id="scenario-chart-container" class="chart-container"></div>
+        </div>
+
+      </section>
+
+      <!-- 3x3 Planning Priority Matrix -->
+      <section style="padding: 0 16px 16px 16px;">
+        <div class="card">
+          <h3>
+            3&times;3 Bivariate Planning Priority Matrix
+            <span class="card-subtitle">Loss Risk Terciles &times; Thermal Stress Terciles (Hectares)</span>
+          </h3>
+          <div id="matrix-grid-container" class="matrix-grid"></div>
+        </div>
+      </section>
+
+      <!-- Methodological Transparency Footer -->
+      <footer class="methodology-panel">
+        <h4>Methodological & Peer-Review Disclosure</h4>
+        <p>
+          Strict empirical mandate: zero synthetic data. Classification features harmonize Landsat 5 TM, Landsat 7 ETM+, 
+          Landsat 8 OLI, and Landsat 9 OLI-2 (Roy et al., 2016). Classifier accuracy is reported against 
+          <strong>ESA WorldCover 2020 as an independent proxy reference</strong> via 4-fold spatial-block cross-validation.
+        </p>
+        <div class="methodology-grid">
+          <div class="meta-item">
+            <strong>Proxy Overall Accuracy:</strong>
+            <span id="meta-overall-acc">--</span>
+          </div>
+          <div class="meta-item">
+            <strong>Cohen's Kappa (&kappa;):</strong>
+            <span id="meta-kappa">--</span>
+          </div>
+          <div class="meta-item">
+            <strong>Pontius FoM (Hindcast):</strong>
+            <span id="meta-fom">--</span>
+          </div>
+          <div class="meta-item">
+            <strong>Compute Time:</strong>
+            <span id="meta-timing-total">--</span>
+          </div>
+        </div>
+      </footer>
+
+    </main>
+  </div>
+
+  <!-- Vendored Leaflet JS for 100% offline functionality -->
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  
+  <!-- Client logic -->
+  <script src="/js/app.js"></script>
+</body>
+</html>
