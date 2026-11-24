@@ -19,6 +19,8 @@ from greenplan.config import load_pipeline_config
 from greenplan.gee.indices import compute_ebbi, compute_mndwi, compute_ndbi, compute_ndvi
 from greenplan.io.manifest import calculate_sha256, create_manifest
 from greenplan.planning.decision_matrix import (
+    compute_loss_risk,
+    compute_thermal_stress,
     evaluate_planning_matrix,
     evaluate_planning_units,
     load_sourced_recommendations,
@@ -536,18 +538,12 @@ def run_pipeline(
     df_scenarios.to_csv(run_dir / "tables" / "scenario_projections.csv", index=False)
 
     # 9. Phase 7: Planning Map, Bivariate Decision Matrix & Planning Units
-    # Modeled loss risk: empirical transition potential to built-up for existing green/agricultural cells
-    loss_risk = np.zeros((h, w), dtype=np.float32)
-    green_lost_2030 = (lulc_2020 == 1) & (sim_2030_bau != 1)
-    farm_lost_2030 = (lulc_2020 == 2) & (sim_2030_bau == 0)
-    loss_risk[green_lost_2030] = 0.90
-    loss_risk[farm_lost_2030] = 0.65
-    # Peri-urban green space under high suitability pressure
-    loss_risk[(lulc_2020 == 1) & (urban_suitability > 0.60)] = 0.75
-
-    thermal_stress = np.clip(
-        (lst_20 - np.nanmin(lst_20)) / (np.nanmax(lst_20) - np.nanmin(lst_20)), 0.0, 1.0
+    loss_risk = compute_loss_risk(
+        current_lulc=lulc_2020,
+        simulated_future_lulc=sim_2030_bau,
+        urban_suitability=urban_suitability,
     )
+    thermal_stress = compute_thermal_stress(lst_20, valid_mask, p_low=2.0, p_high=98.0)
 
     priority_map, risk_cat, heat_cat, area_breakdown = evaluate_planning_matrix(
         loss_risk, thermal_stress, valid_mask

@@ -18,6 +18,83 @@ DECISION_MATRIX = {
     ("low", "low"): "Baseline Ecological Preservation",
 }
 
+# Named baseline risk weights for scenario-conditional land conversion indicators.
+# NOTE: loss_risk is a scenario-conditional spatial indicator derived from the CA-Markov
+# simulation output and suitability surface, not an unconstrained empirical transition probability.
+BASE_RISK_GREEN_CONVERTED: float = 0.90
+BASE_RISK_FARMLAND_CONVERTED: float = 0.65
+BASE_RISK_HIGH_SUITABILITY: float = 0.75
+SUITABILITY_RISK_WEIGHT: float = 0.40
+SCENARIO_CONVERSION_WEIGHT: float = 0.60
+
+
+def compute_loss_risk(
+    current_lulc: np.ndarray,
+    simulated_future_lulc: np.ndarray,
+    urban_suitability: np.ndarray,
+    green_class: int = 1,
+    farmland_class: int = 2,
+    builtup_class: int = 0,
+) -> np.ndarray:
+    """Compute continuous scenario-conditional loss risk surface.
+
+    Combines simulated conversion under BAU with underlying urban conversion suitability.
+    For existing green and agricultural cells, risk is a continuous blend of suitability
+    and simulated loss, using element-wise maximum across components so high-risk cells
+    are never demoted.
+    """
+    h, w = current_lulc.shape
+    is_green = (current_lulc == green_class)
+    is_farm = (current_lulc == farmland_class)
+
+    green_lost = is_green & (simulated_future_lulc != green_class)
+    farm_lost = is_farm & (simulated_future_lulc == builtup_class)
+
+    # Component 1: Simulated conversion indicator under BAU scenario
+    risk_sim = np.zeros((h, w), dtype=np.float32)
+    risk_sim[green_lost] = BASE_RISK_GREEN_CONVERTED
+    risk_sim[farm_lost] = BASE_RISK_FARMLAND_CONVERTED
+
+    # Component 2: Continuous suitability-driven threat for vulnerable classes
+    risk_suit = np.zeros((h, w), dtype=np.float32)
+    suit_clipped = np.clip(urban_suitability, 0.0, 1.0)
+    risk_suit[is_green] = suit_clipped[is_green] * BASE_RISK_HIGH_SUITABILITY
+    risk_suit[is_farm] = suit_clipped[is_farm] * (BASE_RISK_FARMLAND_CONVERTED * 0.90)
+
+    # Component 3: Continuous blended score for converted/threatened cells
+    risk_blend = np.zeros((h, w), dtype=np.float32)
+    active = is_green | is_farm
+    risk_blend[active] = (
+        SCENARIO_CONVERSION_WEIGHT * risk_sim[active]
+        + SUITABILITY_RISK_WEIGHT * risk_suit[active]
+    )
+
+    # Combine with element-wise maximum so converted high-suitability cells get max score
+    risk = np.maximum(risk_sim, risk_suit)
+    risk = np.maximum(risk, risk_blend)
+
+    return risk.astype(np.float32)
+
+
+def compute_thermal_stress(
+    lst: np.ndarray,
+    valid_mask: np.ndarray,
+    p_low: float = 2.0,
+    p_high: float = 98.0,
+) -> np.ndarray:
+    """Normalize Land Surface Temperature into [0.0, 1.0] using robust percentiles on valid pixels."""
+    valid_lst = lst[valid_mask]
+    if len(valid_lst) == 0:
+        return np.zeros_like(lst, dtype=np.float32)
+
+    t_min, t_max = np.percentile(valid_lst, [p_low, p_high])
+    if t_max <= t_min:
+        return np.zeros_like(lst, dtype=np.float32)
+
+    norm = (lst - t_min) / (t_max - t_min)
+    thermal_stress = np.where(valid_mask, np.clip(norm, 0.0, 1.0), 0.0)
+    return thermal_stress.astype(np.float32)
+
 
 def classify_terciles(arr: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Classify 2D array into 0 (low), 1 (medium), 2 (high).
