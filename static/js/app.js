@@ -67,10 +67,10 @@ function initMap() {
     attributionControl: false
   }).setView([23.25, 77.41], 7);
 
-  // Basemap tile layer (CartoDB dark matter for GIS visualization)
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-    subdomains: "abcd",
-    maxZoom: 19
+  // OpenStreetMap basemap tile layer (free and open; zero API key required)
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   }).addTo(state.map);
 
   // Map Click Listener
@@ -163,23 +163,29 @@ async function loadSnapshot(snapshotId) {
     if (!res.ok) throw new Error("Snapshot not found");
     const snap = await res.json();
 
-    document.getElementById("input-lat").value = snap.lat.toFixed(4);
-    document.getElementById("input-lon").value = snap.lon.toFixed(4);
-    document.getElementById("input-radius").value = snap.radius_km;
-    document.getElementById("radius-val").textContent = `${snap.radius_km} km`;
+    const lat = snap.lat ?? snap.metadata?.lat;
+    const lon = snap.lon ?? snap.metadata?.lon;
+    const radius = snap.radius_km ?? snap.metadata?.radius_km ?? 15;
 
-    updateStudyAreaMarker(snap.lat, snap.lon, snap.radius_km);
+    if (lat !== undefined && lon !== undefined) {
+      document.getElementById("input-lat").value = Number(lat).toFixed(4);
+      document.getElementById("input-lon").value = Number(lon).toFixed(4);
+      document.getElementById("input-radius").value = radius;
+      document.getElementById("radius-val").textContent = `${radius} km`;
+      updateStudyAreaMarker(Number(lat), Number(lon), Number(radius));
+    }
 
     // Bounds [min_lon, min_lat, max_lon, max_lat]
     const b = snap.bounds;
-    state.currentBounds = [[b[1], b[0]], [b[3], b[2]]];
-    state.currentOverlays = snap.overlays;
-    state.currentResults = snap.results;
-
-    state.map.fitBounds(state.currentBounds, { padding: [20, 20] });
+    if (b && b.length === 4) {
+      state.currentBounds = [[b[1], b[0]], [b[3], b[2]]];
+      state.map.fitBounds(state.currentBounds, { padding: [20, 20] });
+    }
+    state.currentOverlays = snap.overlays || {};
+    state.currentResults = snap.results || snap;
 
     renderOverlays();
-    renderResults(snap.results);
+    renderResults(state.currentResults);
   } catch (err) {
     alert("Error loading snapshot: " + err.message);
   }

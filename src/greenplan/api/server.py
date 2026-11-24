@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -232,7 +233,48 @@ def get_snapshot_details(snapshot_id: str) -> Any:
     """Load verified results and metadata for a specific offline snapshot."""
     try:
         data = load_snapshot(snapshot_id)
-        return data["results"]
+        meta = data["metadata"]
+        res = data["results"]
+        snap_dir = data["snapshot_dir"]
+
+        # Read bounds from inputs.npz if present
+        bounds = None
+        inputs_file = snap_dir / "inputs.npz"
+        if inputs_file.exists():
+            with np.load(inputs_file) as npz:
+                if "bounds" in npz:
+                    # bounds in inputs.npz: [min_lat, min_lon, max_lat, max_lon]
+                    b = npz["bounds"].tolist()
+                    # Return [min_lon, min_lat, max_lon, max_lat] for Leaflet
+                    bounds = [b[1], b[0], b[3], b[2]]
+
+        if bounds is None:
+            # Fallback approximate bounding box from lat, lon, radius_km
+            lat, lon, r = meta["lat"], meta["lon"], meta.get("radius_km", 15.0)
+            dlat = r / 111.0
+            dlon = r / (111.0 * np.cos(np.radians(lat)))
+            bounds = [lon - dlon, lat - dlat, lon + dlon, lat + dlat]
+
+        overlays = {
+            "lulc_baseline": f"/api/snapshots/{snapshot_id}/overlays/lulc_baseline.png",
+            "lulc_recent": f"/api/snapshots/{snapshot_id}/overlays/lulc_recent.png",
+            "urban_growth": f"/api/snapshots/{snapshot_id}/overlays/urban_growth.png",
+            "thermal_hotspots": f"/api/snapshots/{snapshot_id}/overlays/thermal_hotspots.png",
+            "planning_priority": f"/api/snapshots/{snapshot_id}/overlays/planning_priority.png",
+        }
+
+        return {
+            **res,
+            "id": snapshot_id,
+            "name": meta.get("name", snapshot_id),
+            "lat": meta.get("lat"),
+            "lon": meta.get("lon"),
+            "radius_km": meta.get("radius_km", 15.0),
+            "bounds": bounds,
+            "overlays": overlays,
+            "results": res,
+            "metadata": meta,
+        }
     except FileNotFoundError as fe:
         raise HTTPException(status_code=404, detail=str(fe)) from fe
     except ValueError as ve:
