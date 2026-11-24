@@ -203,7 +203,7 @@ def build_live_inputs(
         if w <= 512 and h <= 512:
             try:
                 arr = geemap.ee_to_numpy(reprojected, region=aoi_utm)
-                return arr.squeeze()
+                return arr.squeeze(axis=-1) if arr.shape[-1] == 1 else arr
             except Exception as exc:
                 logger.warning(
                     "Single-shot raster fetch failed (%s). Falling back to 512x512 tiled extraction.", exc
@@ -226,10 +226,19 @@ def build_live_inputs(
                     proj=utm_crs,
                     geodesic=False,
                 )
-                tile = geemap.ee_to_numpy(reprojected, region=t_geom).squeeze()
+                tile = geemap.ee_to_numpy(reprojected, region=t_geom)
                 if out_arr is None:
-                    out_arr = np.zeros((h, w), dtype=tile.dtype)
-                out_arr[r0:r1, c0:c1] = tile
+                    k = tile.shape[-1]
+                    out_arr = (
+                        np.zeros((h, w), dtype=tile.dtype)
+                        if k == 1
+                        else np.zeros((h, w, k), dtype=tile.dtype)
+                    )
+
+                if out_arr.ndim == 2:
+                    out_arr[r0:r1, c0:c1] = tile.squeeze(axis=-1)
+                else:
+                    out_arr[r0:r1, c0:c1, :] = tile
 
         if out_arr is None:
             raise RuntimeError(f"Failed to extract raster pixels for AOI dimensions ({h}, {w}).")
