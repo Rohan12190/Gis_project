@@ -67,14 +67,36 @@ function initMap() {
     attributionControl: false
   }).setView([23.25, 77.41], 7);
 
-  // OpenStreetMap basemap tile layer (free and open; zero API key required)
-  const baseTiles = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-  }).addTo(state.map);
+  // Satellite Imagery Layer (Esri World Imagery - high resolution, free, zero API key)
+  const satelliteLayer = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    {
+      maxZoom: 19,
+      attribution: "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community"
+    }
+  );
+
+  // Street View Layer (OpenStreetMap - free, zero API key)
+  const streetLayer = L.tileLayer(
+    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }
+  );
+
+  // Set Satellite View as default basemap
+  satelliteLayer.addTo(state.map);
+
+  // Add layer switcher control at top-right
+  const baseMaps = {
+    "Satellite View": satelliteLayer,
+    "Street View": streetLayer
+  };
+  L.control.layers(baseMaps, null, { position: "topright", collapsed: false }).addTo(state.map);
 
   // If network is offline and basemap tiles fail to load, note gracefully
-  baseTiles.on("tileerror", function () {
+  satelliteLayer.on("tileerror", function () {
     const badge = document.getElementById("status-badge");
     if (badge && !state.isOnline) {
       badge.title = "Internet disconnected: snapshot overlays active, basemap tiles unavailable";
@@ -131,8 +153,10 @@ async function checkStatus() {
 
 // Set custom point from click or inputs
 function setCustomPoint(lat, lon) {
-  document.getElementById("input-lat").value = lat.toFixed(4);
-  document.getElementById("input-lon").value = lon.toFixed(4);
+  if (lat !== undefined && lat !== null && lon !== undefined && lon !== null) {
+    document.getElementById("input-lat").value = Number(lat).toFixed(4);
+    document.getElementById("input-lon").value = Number(lon).toFixed(4);
+  }
 
   // De-activate snapshot buttons
   document.querySelectorAll(".quick-btn-group button").forEach(b => b.classList.remove("active"));
