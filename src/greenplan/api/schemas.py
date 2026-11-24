@@ -24,6 +24,15 @@ class BoundingBox(BaseModel):
     max_lon: float
     max_lat: float
 
+    def __getitem__(self, item: int | str) -> float:
+        """Allow subscript indexing [0..3] or ['min_lon'] for sequence compatibility."""
+        coords = [self.min_lon, self.min_lat, self.max_lon, self.max_lat]
+        if isinstance(item, int):
+            return coords[item]
+        if hasattr(self, item):
+            return getattr(self, item)
+        raise KeyError(item)
+
 
 class RunManifest(BaseModel):
     """Self-describing manifest for a completed GreenPlan pipeline run."""

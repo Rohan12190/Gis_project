@@ -72,8 +72,13 @@ def _execute_analysis_job(job_id: str, payload: AnalyzeRequest, run_dir: Path) -
         with open(run_dir / "results.json", "r", encoding="utf-8") as f:
             full_results = json.load(f)
 
-        # bounds in inputs: [min_lat, min_lon, max_lat, max_lon] -> [min_lon, min_lat, max_lon, max_lat]
-        bounds = [inputs.bounds[1], inputs.bounds[0], inputs.bounds[3], inputs.bounds[2]]
+        # bounds in WGS84: [min_lon, min_lat, max_lon, max_lat] for frontend Leaflet layers
+        bounds = [
+            inputs.bounds.min_lon,
+            inputs.bounds.min_lat,
+            inputs.bounds.max_lon,
+            inputs.bounds.max_lat,
+        ]
 
         JOBS_STORE[job_id]["status"] = "completed"
         JOBS_STORE[job_id]["progress_pct"] = 100
