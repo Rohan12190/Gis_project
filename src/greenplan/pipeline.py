@@ -11,7 +11,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import yaml
 
 from greenplan.api.schemas import ArtifactRecord, BoundingBox, RunSummary
 from greenplan.classification.change_analysis import compute_transition_stats
@@ -32,8 +31,7 @@ from greenplan.simulation.markov import (
 )
 from greenplan.simulation.suitability import (
     check_driver_collinearity_vif,
-    compute_euclidean_distance_transform,
-    normalize_driver,
+    extract_spatial_drivers,
     train_suitability_model,
 )
 from greenplan.thermal.regression import (
@@ -356,41 +354,59 @@ def run_pipeline(
     road_mask = np.zeros((h, w), dtype=bool)
     road_mask[:, 60] = True  # North-South highway
     road_mask[50, :] = True  # East-West bypass
-    dist_roads = compute_euclidean_distance_transform(road_mask)
-    dist_water = compute_euclidean_distance_transform(water_mask)
-    dist_built = compute_euclidean_distance_transform(lulc_2010 == 0)
 
-    prox_roads = normalize_driver(dist_roads, invert=True)
-    prox_built = normalize_driver(dist_built, invert=True)
-    prox_water = normalize_driver(dist_water, invert=False)
-
-    drivers_matrix = np.column_stack([prox_roads.ravel(), prox_built.ravel(), prox_water.ravel()])
+    # For TRAINING (2000 -> 2010 transition): proximity to built-up land is derived
+    # strictly from the starting state (lulc_2000 == 0) to eliminate target leakage.
+    drivers_train, layers_2000 = extract_spatial_drivers(
+        built_mask=(lulc_2000 == 0),
+        road_mask=road_mask,
+        water_mask=water_mask,
+    )
     driver_names = ["Prox_Roads", "Prox_Built", "Prox_Water"]
 
-    # Check Variance Inflation Factor (VIF) across spatial drivers
-    vifs = check_driver_collinearity_vif(drivers_matrix, driver_names)
+    # Check Variance Inflation Factor (VIF) on the training driver matrix
+    vifs = check_driver_collinearity_vif(drivers_train, driver_names)
     df_vif = pd.DataFrame(list(vifs.items()), columns=["Driver", "VIF"])
     df_vif.to_csv(run_dir / "tables" / "driver_vif.csv", index=False)
     with open(run_dir / "metrics" / "driver_vif.json", "w", encoding="utf-8") as f:
         json.dump(vifs, f, indent=2)
 
-    # Train suitability model from observed 2000->2010 urban transitions
+    # Train suitability model from observed 2000->2010 urban transitions and evaluate with spatial-block CV
     observed_urban_transition = ((lulc_2000 != 0) & (lulc_2010 == 0)).astype(int).ravel()
-    suit_model, suit_importances = train_suitability_model(
-        drivers_matrix, observed_urban_transition, driver_names, seed=cfg.random_seed
+    suit_model, suit_metrics = train_suitability_model(
+        drivers_train, observed_urban_transition, driver_names, coords=coords, seed=cfg.random_seed
     )
     with open(run_dir / "metrics" / "suitability_model.json", "w", encoding="utf-8") as f:
-        json.dump(suit_importances, f, indent=2)
+        json.dump(suit_metrics, f, indent=2)
 
-    # Predict continuous urban conversion suitability surface
-    urban_suitability = suit_model.predict_proba(drivers_matrix)[:, 1].reshape((h, w)).astype(np.float32)
+    # For HINDCAST PREDICTION (2010 -> 2020), derive proximity drivers from starting state lulc_2010
+    drivers_pred_2010, layers_2010 = extract_spatial_drivers(
+        built_mask=(lulc_2010 == 0),
+        road_mask=road_mask,
+        water_mask=water_mask,
+    )
+    urban_suitability_2010 = suit_model.predict_proba(drivers_pred_2010)[:, 1].reshape((h, w)).astype(np.float32)
+    suitability_maps_2010 = {
+        0: urban_suitability_2010,
+        1: np.clip(1.0 - urban_suitability_2010, 0.0, 1.0),
+        2: np.clip(0.8 - 0.5 * layers_2010["prox_built"], 0.0, 1.0),
+        3: np.zeros((h, w), dtype=np.float32),
+        4: np.clip(0.5 * layers_2010["prox_roads"], 0.0, 1.0),
+    }
 
-    suitability_maps = {
+    # For FUTURE PROJECTIONS (2020 -> 2030 and 2030 -> 2040), derive proximity drivers from lulc_2020
+    drivers_pred_2020, layers_2020 = extract_spatial_drivers(
+        built_mask=(lulc_2020 == 0),
+        road_mask=road_mask,
+        water_mask=water_mask,
+    )
+    urban_suitability = suit_model.predict_proba(drivers_pred_2020)[:, 1].reshape((h, w)).astype(np.float32)
+    suitability_maps_2020 = {
         0: urban_suitability,
         1: np.clip(1.0 - urban_suitability, 0.0, 1.0),
-        2: np.clip(0.8 - 0.5 * prox_built, 0.0, 1.0),
+        2: np.clip(0.8 - 0.5 * layers_2020["prox_built"], 0.0, 1.0),
         3: np.zeros((h, w), dtype=np.float32),
-        4: np.clip(0.5 * prox_roads, 0.0, 1.0),
+        4: np.clip(0.5 * layers_2020["prox_roads"], 0.0, 1.0),
     }
 
     # 7. Phase 5: LST Regression & Getis-Ord Hotspots
@@ -416,7 +432,7 @@ def run_pipeline(
     sim_2020 = allocate_cellular_automata(
         initial_map=lulc_2010,
         target_counts=target_2020_pixels,
-        suitability_maps=suitability_maps,
+        suitability_maps=suitability_maps_2010,
         constraint_mask=~water_mask,
         random_seed=cfg.random_seed,
     )
@@ -434,7 +450,7 @@ def run_pipeline(
     sim_2030_bau = allocate_cellular_automata(
         initial_map=lulc_2020,
         target_counts=target_2030_pixels,
-        suitability_maps=suitability_maps,
+        suitability_maps=suitability_maps_2020,
         constraint_mask=~water_mask,
         random_seed=cfg.random_seed,
     )
@@ -444,7 +460,7 @@ def run_pipeline(
     sim_2030_prot = allocate_cellular_automata(
         initial_map=lulc_2020,
         target_counts=target_2030_pixels,
-        suitability_maps=suitability_maps,
+        suitability_maps=suitability_maps_2020,
         constraint_mask=protected_mask,
         random_seed=cfg.random_seed,
     )
@@ -453,7 +469,7 @@ def run_pipeline(
     sim_2040_bau = allocate_cellular_automata(
         initial_map=lulc_2020,
         target_counts=target_2040_pixels,
-        suitability_maps=suitability_maps,
+        suitability_maps=suitability_maps_2020,
         constraint_mask=~water_mask,
         random_seed=cfg.random_seed,
     )
@@ -462,7 +478,7 @@ def run_pipeline(
     sim_2040_prot = allocate_cellular_automata(
         initial_map=lulc_2020,
         target_counts=target_2040_pixels,
-        suitability_maps=suitability_maps,
+        suitability_maps=suitability_maps_2020,
         constraint_mask=protected_mask,
         random_seed=cfg.random_seed,
     )
@@ -653,6 +669,13 @@ def run_pipeline(
     # Save Tables & Metrics
     df_acc = pd.DataFrame(rf_result["metrics"]["classes"])
     df_acc.to_csv(run_dir / "tables" / "accuracy_rf.csv", index=False)
+
+    df_trans_00_10 = pd.DataFrame(
+        change_00_10["transition_matrix_counts"],
+        columns=[c.name for c in cfg.class_scheme],
+        index=[c.name for c in cfg.class_scheme],
+    )
+    df_trans_00_10.to_csv(run_dir / "tables" / "transitions_2000_2010.csv")
 
     df_trans = pd.DataFrame(
         change_10_20["transition_matrix_counts"],

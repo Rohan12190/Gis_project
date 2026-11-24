@@ -117,7 +117,7 @@ def build_empty_region_payload(city_key: str, gee_client: GEEClient) -> Dict:
         "overlay_expansion": "",
         "overlay_priority": "",
         "acc_html": f"<p>No run data found. Execute <code>uv run greenplan run --city {city_key}</code>.</p>",
-        "trans_html": f"<p>No transition data found.</p>",
+        "trans_html": "<p>No transition data found.</p>",
         "orbit": orbit,
         "scenes_rows": scenes_rows,
     }

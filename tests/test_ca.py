@@ -7,7 +7,6 @@ from greenplan.simulation.ca import allocate_cellular_automata
 
 def test_ca_allocation_guarantees_target_counts():
     h, w = 40, 40
-    total_pixels = h * w
     initial_map = np.random.choice([0, 1, 2], size=(h, w), p=[0.2, 0.3, 0.5])
 
     # Target counts strictly specified
