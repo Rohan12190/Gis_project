@@ -80,12 +80,15 @@ def build_empty_region_payload(city_key: str, gee_client: GEEClient) -> Dict:
     gee_status = gee_client.get_status()
     orbit = gee_status["regional_orbits"].get(city_key, "Path 146 / Row 044")
 
-    scenes_rows = "".join(
-        f"<tr><td><strong>{yr}</strong></td><td><code>{sc['scene_id']}</code></td>"
-        f"<td>{sc['sensor']}</td><td>{sc['acquisition_date']}</td><td>{sc['cloud_cover']}%</td>"
-        f'<td><span class="badge" style="background:#64748b;">CATALOG READY</span></td></tr>'
-        for yr, sc in gee_scenes.items()
-    )
+    if gee_scenes and isinstance(gee_scenes, dict):
+        scenes_rows = "".join(
+            f"<tr><td><strong>{yr}</strong></td><td><code>{sc['scene_id']}</code></td>"
+            f"<td>{sc['sensor']}</td><td>{sc['acquisition_date']}</td><td>{sc['cloud_cover']}%</td>"
+            f'<td><span class="badge" style="background:#64748b;">CATALOG READY</span></td></tr>'
+            for yr, sc in gee_scenes.items()
+        )
+    else:
+        scenes_rows = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;">No USGS Landsat catalog scenes indexed for this region.</td></tr>'
 
     return {
         "city_key": city_key,
@@ -173,7 +176,7 @@ def build_region_payload(run_path: Path, city_key: str, gee_client: GEEClient) -
     gee_status = gee_client.get_status()
     orbit = gee_status["regional_orbits"].get(city_key, "Path 146 / Row 044")
 
-    if isinstance(gee_scenes, dict):
+    if gee_scenes and isinstance(gee_scenes, dict):
         scenes_rows = "".join(
             f"<tr><td><strong>{yr}</strong></td><td><code>{sc.get('scene_id', sc)}</code></td>"
             f"<td>{sc.get('sensor', 'Landsat')}</td><td>{sc.get('acquisition_date', '')}</td><td>{sc.get('cloud_cover', 0.0)}%</td>"
@@ -182,7 +185,7 @@ def build_region_payload(run_path: Path, city_key: str, gee_client: GEEClient) -
             if isinstance(sc, dict)
         )
     else:
-        scenes_rows = ""
+        scenes_rows = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;">No USGS Landsat catalog scenes indexed for this region.</td></tr>'
 
     narrative = generate_dynamic_narrative(summary, city_key)
 
@@ -964,20 +967,20 @@ def generate_html_report(run_dir: Path) -> Path:
     </div>
 </div>
 
-<!-- ================= GOOGLE EARTH ENGINE (ON-DEMAND SATELLITE ML STUDIO) ================= -->
+<!-- ================= GOOGLE EARTH ENGINE (MULTI-SPECTRAL INDEX ANALYSIS STUDIO) ================= -->
 <div id="gee-view" style="display: none;">
     <!-- Story / Plain-English Intro Card -->
     <div class="story-card" style="border-left: 4px solid #3b82f6;">
         <div class="story-header">
             <div>
-                <span class="story-title" style="color: #60a5fa;">Google Earth Engine Satellite Prediction Studio</span>
-                <span class="badge" style="background: #10b981; margin-left: 0.5rem;">LIVE CLOUD PREDICTION</span>
+                <span class="story-title" style="color: #60a5fa;">Google Earth Engine Multi-Spectral Index Studio</span>
+                <span class="badge" style="background: #10b981; margin-left: 0.5rem;">LIVE SATELLITE ANALYSIS</span>
             </div>
             <div style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">NASA / USGS Landsat Collection 2 Tier 1</div>
         </div>
         <ul class="bullet-list" style="margin-top: 0.5rem;">
-            <li><strong>Analyze Any Location on Earth:</strong> While Bhopal, Kothri, Sehore, and Indore feature pre-calculated 20-year deep historical baselines, this studio connects directly to Google Cloud supercomputers to stream satellite scenes for <strong>any city, town, or custom coordinates</strong> on demand.</li>
-            <li><strong>On-The-Fly ML Prediction:</strong> Fetches live cloud-free Landsat pixels, calculates multi-spectral indices (NDVI, NDBI, MNDWI, LST), and predicts Land Cover, Ground Heat, and Tree Planting priorities in real time.</li>
+            <li><strong>Analyze Any Location on Earth:</strong> While Bhopal, Kothri, Sehore, and Indore feature pre-calculated 20-year deep historical baselines, this studio connects directly to Google Earth Engine to stream satellite scenes for <strong>any city, town, or custom coordinates</strong> on demand.</li>
+            <li><strong>Multi-Spectral Index Threshold Analysis:</strong> Fetches live cloud-free Landsat pixels, calculates standard spectral indices (NDVI, NDBI, MNDWI, LST), and applies validated deterministic thresholds (Water: MNDWI &gt; 0.0; Vegetation: NDVI &gt; 0.28; Built-up: NDBI &gt; 0.06; Farmland: remaining unclassified; Priority Planting: Built-up &amp; LST &gt; 35.0 °C). <em>Note: This interactive analysis uses deterministic multi-spectral index thresholding, distinct from the offline Random Forest classifier.</em></li>
             <li><strong>Decision-Ready Output:</strong> Delivers instant interactive GIS map layers, quantitative KPI metrics, and tailored urban planning recommendations.</li>
         </ul>
     </div>
@@ -985,7 +988,7 @@ def generate_html_report(run_dir: Path) -> Path:
     <!-- On-Demand Location Selection Studio -->
     <div class="figure-card" style="margin-bottom: 1.5rem; padding: 1.2rem 1.6rem; background: #0f172a; border: 1px solid #334155;">
         <div style="font-size: 0.85rem; color: #38bdf8; text-transform: uppercase; font-weight: 700; margin-bottom: 0.6rem;">
-            🛰️ Select or Enter Any Target Location for Live Satellite Prediction
+            🛰️ Select or Enter Any Target Location for Multi-Spectral Index Analysis
         </div>
 
         <!-- Quick Select Buttons for Regional Expansion -->
@@ -1970,7 +1973,7 @@ async function runGeePrediction(name, lat, lon, radius, presetKey) {{
     const prog = document.getElementById('gee-progress-card');
     const progText = document.getElementById('gee-progress-text');
     if (prog) prog.style.display = 'block';
-    if (progText) progText.innerText = "Connecting to Google Cloud supercomputers for " + name + "...";
+    if (progText) progText.innerText = "Connecting to Google Earth Engine for " + name + "...";
 
     let result = null;
 
@@ -1979,7 +1982,7 @@ async function runGeePrediction(name, lat, lon, radius, presetKey) {{
     }}
 
     try {{
-        if (progText) progText.innerText = "Querying live Landsat 8/9 scenes and masking clouds...";
+        if (progText) progText.innerText = "Querying live Landsat scenes and computing spectral indices...";
         const resp = await fetch(`/api/predict_gee?city=${{encodeURIComponent(name)}}&lat=${{lat}}&lon=${{lon}}&radius=${{radius}}`);
         if (resp.ok) {{
             const liveData = await resp.json();
@@ -2002,15 +2005,21 @@ async function runGeePrediction(name, lat, lon, radius, presetKey) {{
                     recs: liveData.recommendation,
                     tiles: liveData.tiles
                 }};
+            }} else if (liveData && !liveData.success) {{
+                if (!presetKey) {{
+                    if (prog) prog.style.display = 'none';
+                    alert(`Earth Engine authentication required.\\n\\n${{liveData.error || liveData.detail || ''}}\\n\\nRun 'earthengine authenticate' or provide EARTHENGINE_PROJECT / GEE_PROJECT in your environment.`);
+                    return;
+                }}
             }}
         }}
     }} catch (e) {{
-        // Fallback to preset or computed
+        // Fallback to preset if available
     }}
 
     if (!result) {{
         if (prog) prog.style.display = 'none';
-        alert(`Earth Engine live analysis is currently unauthenticated on the server.\\n\\nTo query live Landsat satellite imagery for "${{name}}", run 'earthengine authenticate' or provide EE_PROJECT_ID in your environment.`);
+        alert(`Earth Engine live analysis is currently unauthenticated on the server.\\n\\nTo query live Landsat satellite imagery for "${{name}}", run 'earthengine authenticate' or provide EARTHENGINE_PROJECT in your environment.`);
         return;
     }}
 
@@ -2025,7 +2034,7 @@ function renderGeePrediction(r) {{
 
     document.getElementById('gee-res-city-title').innerText = r.name;
     document.getElementById('gee-recs-city-title').innerText = r.name;
-    document.getElementById('gee-map-label').innerText = r.name + " (Live Earth Engine Satellite Prediction)";
+    document.getElementById('gee-map-label').innerText = r.name + " (Live Earth Engine Multi-Spectral Index Analysis)";
     document.getElementById('gee-map-sub').innerText = `Center: [${{r.lat.toFixed(4)}}°N, ${{r.lon.toFixed(4)}}°E] • Search Radius: ${{r.buffer_km || 8.0}} km`;
 
     // Metadata Bar

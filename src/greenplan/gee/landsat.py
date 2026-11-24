@@ -172,13 +172,14 @@ REGIONAL_LANDSAT_CATALOG = {
 def get_landsat_collection_id(year: int) -> str:
     """Return appropriate Landsat Collection 2 Level-2 ID based on operational epoch.
 
-    Landsat 5 TM: 1984 - 2012 (ideal for 2000 baseline)
-    Landsat 7 ETM+: 1999 - present (note: SLC-off post May 2003)
-    Landsat 8 OLI/TIRS: 2013 - present (ideal for 2020 epoch)
+    Landsat 5 TM: 1984 - 2011 (operational baseline for 2000 and 2010 epochs)
+    Landsat 7 ETM+: 2012 (note: SLC-off post May 2003 causes striping artifacts)
+    Landsat 8 OLI/TIRS: 2013 - 2021 (ideal for 2020 epoch)
+    Landsat 9 OLI-2/TIRS-2: 2022 - present
     """
-    if year <= 2005:
+    if year <= 2011:
         return "LANDSAT/LT05/C02/T1_L2"
-    elif year <= 2012:
+    elif year == 2012:
         return "LANDSAT/LE07/C02/T1_L2"
     elif year <= 2021:
         return "LANDSAT/LC08/C02/T1_L2"
@@ -196,8 +197,20 @@ class GEEClient:
         project_id: Optional[str] = None,
         api_key: Optional[str] = None,
     ):
-        self.project_id = project_id or os.environ.get("EE_PROJECT_ID") or ""
-        self.api_key = api_key or os.environ.get("EE_API_KEY") or ""
+        self.project_id = (
+            project_id
+            or os.environ.get("EARTHENGINE_PROJECT")
+            or os.environ.get("GEE_PROJECT")
+            or os.environ.get("EE_PROJECT_ID")
+            or ""
+        )
+        self.api_key = (
+            api_key
+            or os.environ.get("EARTHENGINE_API_KEY")
+            or os.environ.get("GEE_API_KEY")
+            or os.environ.get("EE_API_KEY")
+            or ""
+        )
         self.route = (
             f"{self.ENDPOINT_URL}/projects/{self.project_id}/image:computePixels"
             if self.project_id
@@ -284,9 +297,17 @@ class GEEClient:
                     "cloud_cover": round(float(props.get("CLOUD_COVER", 1.0)), 2),
                     "live": True,
                 }
-        except Exception:
-            pass
-        return self.fetch_scene_metadata(aoi_name, epoch=year)
+            return {
+                "live": False,
+                "error": f"No scenes found in collection {coll_id} for {aoi_name} in {year}",
+                "scene_id": None,
+            }
+        except Exception as e:
+            return {
+                "live": False,
+                "error": f"Earth Engine authentication required. Run: earthengine authenticate ({str(e)})",
+                "scene_id": None,
+            }
 
     def fetch_scene_metadata(
         self,
@@ -294,54 +315,27 @@ class GEEClient:
         epoch: Optional[int] = None,
         start_date: str = "03-01",
         end_date: str = "05-15",
-    ) -> Dict:
-        """Retrieve verified USGS Landsat catalog metadata for historical peer-reviewed baseline."""
+    ) -> Optional[Dict]:
+        """Retrieve verified USGS Landsat catalog metadata for historical peer-reviewed baseline.
+
+        Returns None if AOI or epoch is not catalogued (never fabricates unverified scenes).
+        """
         key = aoi_name.lower()
-        if key in REGIONAL_LANDSAT_CATALOG:
-            cat = REGIONAL_LANDSAT_CATALOG[key]
-            if epoch is not None and epoch in cat["scenes"]:
+        if key not in REGIONAL_LANDSAT_CATALOG:
+            return None
+
+        cat = REGIONAL_LANDSAT_CATALOG[key]
+        if epoch is not None:
+            if epoch in cat["scenes"]:
                 meta = cat["scenes"][epoch].copy()
                 meta["path_row"] = cat["path_row"]
                 meta["verified_catalog"] = True
                 return meta
-            elif epoch is None:
-                # Return all epoch scenes
-                return {
-                    yr: dict(sc, path_row=cat["path_row"], verified_catalog=True)
-                    for yr, sc in cat["scenes"].items()
-                }
-
-        # Fallback multi-epoch dictionary
-        if epoch is None:
-            return {
-                yr: {
-                    "scene_id": f"LANDSAT_{yr}_VERIFIED",
-                    "sensor": "Landsat 5 TM" if yr <= 2005 else ("Landsat 7 ETM+" if yr <= 2012 else "Landsat 8 OLI/TIRS"),
-                    "acquisition_date": f"{yr}-04-15",
-                    "cloud_cover": 1.5,
-                    "collection_id": get_landsat_collection_id(yr),
-                    "path_row": "146/044",
-                    "verified_catalog": False,
-                }
-                for yr in [2000, 2010, 2020]
-            }
-
-        target_year = epoch or 2020
-        coll_id = get_landsat_collection_id(target_year)
-        sensor_name = (
-            "Landsat 5 TM"
-            if target_year <= 2005
-            else ("Landsat 7 ETM+" if target_year <= 2012 else "Landsat 8 OLI/TIRS")
-        )
+            return None
 
         return {
-            "scene_id": f"LANDSAT_{target_year}_VERIFIED",
-            "sensor": sensor_name,
-            "acquisition_date": f"{target_year}-04-15",
-            "cloud_cover": 1.5,
-            "collection_id": coll_id,
-            "path_row": "146/044",
-            "verified_catalog": False,
+            yr: dict(sc, path_row=cat["path_row"], verified_catalog=True)
+            for yr, sc in cat["scenes"].items()
         }
 
 
@@ -357,7 +351,11 @@ def predict_location_gee(
     try:
         import ee
 
-        project_id = os.environ.get("EE_PROJECT_ID")
+        project_id = (
+            os.environ.get("EARTHENGINE_PROJECT")
+            or os.environ.get("GEE_PROJECT")
+            or os.environ.get("EE_PROJECT_ID")
+        )
         if project_id:
             ee.Initialize(project=project_id)
         else:
@@ -478,13 +476,13 @@ def predict_location_gee(
         # Never fabricate fake data. Surface explicit error and instruction to authenticate.
         return {
             "success": False,
+            "error": "Earth Engine authentication required. Run: earthengine authenticate",
+            "detail": str(e),
             "name": city_name,
             "lat": lat,
             "lon": lon,
             "bounds": [[lat - 0.07, lon - 0.07], [lat + 0.07, lon + 0.07]],
             "buffer_km": buffer_km,
-            "error": f"Earth Engine query failed: {str(e)}",
-            "message": "Google Earth Engine authentication required. Run 'earthengine authenticate' or set EE_PROJECT_ID / EE_API_KEY.",
             "source": "Google Earth Engine (Authentication Required)",
         }
 

@@ -24,12 +24,7 @@
     "lst": 30.3,
     "priority_km2": 0.21,
     "recs": "Balanced ecological distribution (Canopy 87.7%, Farmland 10.9%). Protect existing wetland and riparian buffers to maintain microclimate stability as urbanization expands.",
-    "tiles": {
-      "sat": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/7d4143d136c56fabdabf11649f68a2a1-ad9cd6cf203d8f20c661145b16f7699b/tiles/{z}/{x}/{y}",
-      "landcover": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/206342b4cecd9fe3ff4f28443e5a2c89-dc627ca5f6763851fe01114659256fd0/tiles/{z}/{x}/{y}",
-      "thermal": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/5f4acd750f11924b4efe9c11c9382790-7b621a6118ad417538d5d4aa0d264726/tiles/{z}/{x}/{y}",
-      "priority": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/929a8a9de611530f48c2619101d1b796-56aa0a34821223ec253cf2a6aa67e397/tiles/{z}/{x}/{y}"
-    }
+    "tiles": {}
   },
   "dewas": {
     "name": "Dewas",
@@ -56,12 +51,7 @@
     "lst": 31.5,
     "priority_km2": 1.06,
     "recs": "Balanced ecological distribution (Canopy 89.0%, Farmland 9.2%). Protect existing wetland and riparian buffers to maintain microclimate stability as urbanization expands.",
-    "tiles": {
-      "sat": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/7d4143d136c56fabdabf11649f68a2a1-088535369ea4785522ebbe93cefb1bb6/tiles/{z}/{x}/{y}",
-      "landcover": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/206342b4cecd9fe3ff4f28443e5a2c89-61a994d6cd3b7a8fd15945f2d51c8db9/tiles/{z}/{x}/{y}",
-      "thermal": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/5f4acd750f11924b4efe9c11c9382790-bdc57d0c731840d3c74a46a84de3c684/tiles/{z}/{x}/{y}",
-      "priority": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/929a8a9de611530f48c2619101d1b796-1cfda25489730c734afc42cdf15a0c19/tiles/{z}/{x}/{y}"
-    }
+    "tiles": {}
   },
   "vidisha": {
     "name": "Vidisha",
@@ -88,12 +78,7 @@
     "lst": 47.1,
     "priority_km2": 26.11,
     "recs": "Dense urban heating detected (Mean LST 47.1\u00b0C, Built-up 37.1%). Prioritize cool-roof mandates, roadside shaded tree corridors, and municipal pocket parks in high-density wards to lower ground heat.",
-    "tiles": {
-      "sat": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/c36d7fdf8fd18cdd22182858ac14caf9-c1a04ac577c31fa18bdc8a104c24c5ee/tiles/{z}/{x}/{y}",
-      "landcover": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/cb544b007ed6a62a60d04bee401e6094-c6af41079e93a5f9e0c17cc7d2d2f47f/tiles/{z}/{x}/{y}",
-      "thermal": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/7b22e611e4d86850f0dac44e51bd0651-be38a67ff9255fa17eeec35c2f724ae8/tiles/{z}/{x}/{y}",
-      "priority": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/6bf0c76d3b5ae4eac2d6e54f31edcdf9-7b1f73343bff0a15b8d989fa156057a3/tiles/{z}/{x}/{y}"
-    }
+    "tiles": {}
   },
   "narmadapuram": {
     "name": "Narmadapuram",
@@ -120,12 +105,7 @@
     "lst": 40.2,
     "priority_km2": 28.65,
     "recs": "Dense urban heating detected (Mean LST 40.2\u00b0C, Built-up 40.7%). Prioritize cool-roof mandates, roadside shaded tree corridors, and municipal pocket parks in high-density wards to lower ground heat.",
-    "tiles": {
-      "sat": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/c36d7fdf8fd18cdd22182858ac14caf9-2e07b1c613f209966cf7e34bbc85894f/tiles/{z}/{x}/{y}",
-      "landcover": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/cb544b007ed6a62a60d04bee401e6094-bfdbf13a79122c7b06abe71c17780edd/tiles/{z}/{x}/{y}",
-      "thermal": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/7b22e611e4d86850f0dac44e51bd0651-de34e1b780d3d941d46d740b6579c2e4/tiles/{z}/{x}/{y}",
-      "priority": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/6bf0c76d3b5ae4eac2d6e54f31edcdf9-7dc5406a5422d17bd87215d5ae3342cf/tiles/{z}/{x}/{y}"
-    }
+    "tiles": {}
   },
   "raisen": {
     "name": "Raisen",
@@ -152,12 +132,7 @@
     "lst": 47.0,
     "priority_km2": 25.48,
     "recs": "Dense urban heating detected (Mean LST 47.0\u00b0C, Built-up 36.2%). Prioritize cool-roof mandates, roadside shaded tree corridors, and municipal pocket parks in high-density wards to lower ground heat.",
-    "tiles": {
-      "sat": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/c36d7fdf8fd18cdd22182858ac14caf9-36621d53a095948de06525a36b7dafec/tiles/{z}/{x}/{y}",
-      "landcover": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/cb544b007ed6a62a60d04bee401e6094-1603b162079af9b63537d5fc309ca945/tiles/{z}/{x}/{y}",
-      "thermal": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/7b22e611e4d86850f0dac44e51bd0651-0f338409565123b64d5223c14ea02c59/tiles/{z}/{x}/{y}",
-      "priority": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/6bf0c76d3b5ae4eac2d6e54f31edcdf9-a503ef5d83bf48506cf0d805846ea00d/tiles/{z}/{x}/{y}"
-    }
+    "tiles": {}
   },
   "jabalpur": {
     "name": "Jabalpur",
@@ -184,12 +159,7 @@
     "lst": 27.0,
     "priority_km2": 1.9,
     "recs": "Balanced ecological distribution (Canopy 85.7%, Farmland 10.8%). Protect existing wetland and riparian buffers to maintain microclimate stability as urbanization expands.",
-    "tiles": {
-      "sat": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/270ac3de995905b0023fa5a291e0c758-19fbbe40f7e51b145ec2a4ebfe15fb0f/tiles/{z}/{x}/{y}",
-      "landcover": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/e0a39e1611d97b91d0aa5fc4bc8ee584-6b43d798ba2a33399c167def596e5d9b/tiles/{z}/{x}/{y}",
-      "thermal": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/3d7aad6c81c0bca0c0ae42c0a0af779e-a27d310d2b9d0a2fba3cb198737d9b81/tiles/{z}/{x}/{y}",
-      "priority": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/152a440f824284d716309dabc894c9b2-9bb5986584e9c67d09111d5336637dce/tiles/{z}/{x}/{y}"
-    }
+    "tiles": {}
   },
   "gwalior": {
     "name": "Gwalior",
@@ -216,11 +186,6 @@
     "lst": 48.1,
     "priority_km2": 20.9,
     "recs": "Dense urban heating detected (Mean LST 48.1\u00b0C, Built-up 29.7%). Prioritize cool-roof mandates, roadside shaded tree corridors, and municipal pocket parks in high-density wards to lower ground heat.",
-    "tiles": {
-      "sat": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/511754456940b3dd365f3713f5b277b8-4ac17691322e0ae289fd64b5c23bce27/tiles/{z}/{x}/{y}",
-      "landcover": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/94c3efa48dddebf526f97ae07baaf9cc-cec7719f674e5ab3d24e5f426ed2140e/tiles/{z}/{x}/{y}",
-      "thermal": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/0d96d3db8d0535661fc7d201966982b5-0c878f8eda4372bc55956a1782ed8a16/tiles/{z}/{x}/{y}",
-      "priority": "https://earthengine.googleapis.com/v1/projects/robust-form-506016-n0/maps/b99faae4a51f922d5e215846eafdb708-aea7fa2376738695c00614cbe595eaca/tiles/{z}/{x}/{y}"
-    }
+    "tiles": {}
   }
 }

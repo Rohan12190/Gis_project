@@ -48,6 +48,21 @@
 ## Task 6: CA-Markov Target Allocation, Multi-Seed Validation & Pontius Alignment
 - **Files Modified:** `src/greenplan/simulation/ca.py`, `src/greenplan/simulation/markov.py`, `src/greenplan/validation/metrics.py`, `src/greenplan/pipeline.py`
 - **Changes:**
+  - Added target check in `allocate_cellular_automata()` warning if discrepancy exceeds 1% of class area.
+  - Aligned `compute_figure_of_merit()` keys and docstrings with Pontius et al. (2008): components A (misses), B (hits), C (wrong-category), D (false alarms), plus Quantity and Allocation Disagreement.
+  - Loaded `configs/scenarios.yaml` dynamically in `pipeline.py` and `markov.py` and computed projection steps from `cfg.projection_years` and temporal intervals with documented stationarity assumption.
+  - Implemented 5-seed validation in Phase 5 reporting mean and std of FoM, $K_{\text{location}}$, $K_{\text{quantity}}$, Quantity Disagreement, and Allocation Disagreement to `metrics/simulation.json`.
+- **Tests Added:** `tests/test_ca.py` (`test_ca_exact_area_allocation_small_grid`, `test_multi_seed_simulation_reports_mean_and_std`), `tests/test_metrics.py` (`test_pontius_figure_of_merit_hand_worked_example`).
+
+## Task 7: Google Earth Engine Integration Honesty & Error Handling
+- **Files Modified/Created:**
+  - `src/greenplan/gee/landsat.py`: Updated `get_landsat_collection_id(year)` to map `<= 2011` to Landsat 5 TM (`LT05`), `2012` to Landsat 7 ETM+ (`LE07`), `2013-2021` to Landsat 8 (`LC08`), and `>= 2022` to Landsat 9 (`LC09`).
+  - `src/greenplan/gee/landsat.py`: `fetch_scene_metadata()` returns `None` for uncatalogued regions or missing epochs, eliminating fabricated `LANDSAT_{yr}_VERIFIED` fallback dictionaries.
+  - `src/greenplan/gee/landsat.py`: `query_live_landsat_scene()` and `predict_location_gee()` return explicit `success: False` / `live: False` with authentication instructions when Earth Engine is unauthenticated or queries fail, completely eliminating hash-based pseudo-random data fabrication.
+  - `src/greenplan/gee_presets.json`: Removed all hardcoded GCP project IDs and expired signed tile URLs (`tiles: {}`).
+  - `src/greenplan/viewer.py`: Relabeled "GEE ML Prediction" to "Multi-Spectral Index Threshold Analysis (NDVI/NDBI/MNDWI)", documented exact spectral indices and classification thresholds used, and added explicit frontend error display on authentication failure.
+  - `scripts/verify_catalog.py`: Script to verify all catalogued USGS scene IDs against Earth Engine when authenticated and flag missing or inaccessible assets.
+- **Tests Added:** `tests/test_gee.py` (`test_get_landsat_collection_id_epochs`, `test_fetch_scene_metadata_returns_none_for_uncatalogued`, `test_query_live_landsat_scene_unauthenticated_does_not_fake`, `test_predict_location_gee_unauthenticated_explicit_error`, `test_gee_presets_no_expired_urls_or_hardcoded_projects`).
   - Added target allocation verification in `ca.py` warning if discrepancies exceed 1% of class area.
   - Aligned `compute_figure_of_merit()` docstrings, variable naming, and return keys with Pontius et al. (2008): A (misses), B (hits), C (wrong-category), D (false alarms); added Pontius Quantity Disagreement and Allocation Disagreement.
   - Loaded `configs/scenarios.yaml` dynamically in `markov.py` and `pipeline.py` to drive scenario simulations rather than hardcoding them.
