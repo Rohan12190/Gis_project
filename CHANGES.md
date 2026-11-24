@@ -124,5 +124,59 @@
   - Grassland/shrubland mapped to Green Space (1); wetland mapped to Water (3).
   - Landsat 5 TM reflectance harmonized using Roy et al. (2016) ETM+ to OLI coefficients as standard approximation.
   - ESA WorldCover 2020 treated as an independent proxy reference layer rather than absolute ground truth.
-- **Tests Added:** `tests/test_empirical.py` (8 unit tests verifying confusion matrix vectorization, transition stats vectorization, Markov matrix vectorization, majority filter vectorization, WorldCover remapping, and data provider contract validation).
+---
+
+## [Real-Data Earth Engine Rebuild: Phases 0-8]
+
+### Phase 0: Branch Setup & Zero-Synthetic Purge
+- Setup branch `rebuild/real-gis` and backed up repository on `backup/main-before-rebuild`.
+- Purged all synthetic landscape generation code, fake seeds, and synthetic CLI switches.
+- Ported pure spatial algorithms (CA, Markov, suitability, metrics, thermal regression, decision matrix).
+- Configured region-level settings in `configs/region.yaml` (Madhya Pradesh, GAUL boundary, 7 checkpoints: 2000, 2004, 2008, 2012, 2016, 2020, 2025).
+
+### Phase 1: Robust Earth Engine Client & Compositing
+- Implemented `src/greenplan/gee/client.py` with `.env` reading and exponential backoff retry.
+- Implemented `src/greenplan/gee/composites.py` for Landsat 5, 7, 8, 9 with QA_PIXEL cloud/shadow masking, Roy et al. (2016) harmonization, and spectral indices (NDVI, NDBI, MNDWI).
+- Verified live GEE connection with real satellite test query.
+
+### Phase 2: Honest Regional Random Forest Classifier
+- Built `src/greenplan/models/train_regional_model.py` using GEE stratified sampling with ESA WorldCover 2020 proxy reference.
+- Excluded seasonal thermal (TIR) and spatial coordinates (lat/lon) from features.
+- Evaluated via 4-fold spatial-block CV reporting Overall Accuracy, Kappa, Macro F1, and Pontius Quantity/Allocation Disagreement.
+- Added CLI command `greenplan train-model`.
+
+### Phase 3: Live Input Pipeline & Persistence Filtering
+- Implemented `src/greenplan/io/live_inputs.py` for dynamic user-selected points within regional boundaries.
+- Computed local UTM CRS projections and pulled multi-epoch classified rasters via `geemap.ee_to_numpy`.
+- Implemented `builtup_persistence` filtering to eliminate single-epoch classification blips while preserving valid non-built land transitions.
+- Added safe OSM Nominatim reverse geocoding with timeout and offline fallback.
+
+### Phase 4: Core Analysis Pipeline & Hindcast Validation
+- Rebuilt `src/greenplan/pipeline.py` with unified entrypoint `run_analysis(inputs, run_dir, cfg)`.
+- Implemented adjacent-epoch Markov transitions and CA allocation for 2035 and 2045 projections across 3 scenarios (BAU, Conservation, Infill).
+- Evaluated hindcast against real held-out satellite epochs with Pontius FoM, null model agreement, and quantity/allocation disagreement.
+- Derivated OLS thermal regression, Moran's I on residuals, Getis-Ord Gi* hotspots, and 3x3 bivariate decision matrix.
+- Recorded execution timings for every step in `results.json`.
+- Added CLI command `greenplan analyze`.
+
+### Phase 5: Frozen Offline Snapshots for Bhopal & Kothri
+- Built `src/greenplan/snapshots.py` with SHA-256 cryptographic verification.
+- Generated and committed verified offline snapshots for **Bhopal** and **Kothri** (VIT Bhopal) with GeoTIFFs, PNG overlays, thumbnails, `inputs.npz`, `results.json`, and `checksums.json`.
+- Added CLI commands `greenplan snapshot create`, `verify`, and `list`.
+
+### Phase 6: FastAPI REST API
+- Built `src/greenplan/api/server.py` with endpoints for status, region boundary GeoJSON, snapshot listing/details, live analysis job submission/polling, and static asset serving.
+- Added CLI command `greenplan serve --host 0.0.0.0 --port 8000`.
+
+### Phase 7: Offline-Capable Leaflet Web UI
+- Built responsive GIS web interface (`static/index.html`, `static/css/styles.css`, `static/js/app.js`).
+- Vendored Leaflet CSS and JS locally for 100% offline operation.
+- Added place picker with instant snapshot buttons and click-to-pick map point.
+- Rendered live spatial overlays, SVG historical NDVI trend charts, CA scenario comparison charts, 3x3 Planning Priority Matrix grid, and methodological disclosure.
+
+### Phase 8: Benchmarks, Documentation & Final Audit
+- Created `scripts/benchmark.py` measuring disk footprint (~16 MB), SHA-256 verification, load speed (~50 ms), and peak memory (~0.14 MB).
+- Updated `README.md` and `CHANGES.md`.
+- Conducted full code audit verifying zero synthetic generation code in active workflows.
+
 

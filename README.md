@@ -1,76 +1,139 @@
-# GreenPlan: Urban Growth & Green Space Planning Using GIS (EPICS23-554)
+# GreenPlan: Empirical Urban Growth & Green Space Planning Using Earth Engine
 
 ## Project Overview
-GreenPlan is a multi-temporal remote sensing and spatial modeling decision-support framework designed to map historical land use land cover (LULC) transformation, model the thermal consequences of green space loss (Land Surface Temperature regression), simulate future urban sprawl trajectories (Cellular Automata Markov chains), and prioritize conservation/mitigation interventions in planning units.
+GreenPlan is an empirical, satellite-derived remote sensing and spatial modeling decision-support framework designed for urban environmental planning. Built on **Google Earth Engine (GEE)**, it provides:
+1. **Multi-epoch LULC classification** across real Landsat missions (Landsat 5 TM, 7 ETM+, 8 OLI, 9 OLI-2) using an honest Random Forest trained against an independent proxy reference (ESA WorldCover 2020) with spatial-block cross-validation.
+2. **Built-up persistence filtering** ensuring historical urban infrastructure is conserved across epochs while accurately capturing non-built land transitions.
+3. **Thermal impact analysis** with hot-season Land Surface Temperature (LST) derivation, OLS regression on vegetation and density, spatial autocorrelation control (Moran's I), and Getis-Ord Gi* hotspot identification.
+4. **CA-Markov predictive modeling** with adjacent-epoch transition matrices, hindcast validation evaluated with Pontius Figure of Merit (FoM) against a null model, and multi-scenario forward projections (BAU, Conservation-First, Infill).
+5. **3x3 Bivariate Planning Priority Matrix** cross-tabulating urban green loss risk against thermal stress to assign actionable, sourced recommendations to spatial planning units.
+6. **Zero-synthetic-data guarantee:** 100% of figures, rasters, and metrics derive strictly from real satellite observations or cryptographically verified offline snapshots.
 
-## Study Area
-Bhopal Metropolitan Area and peri-urban buffer, Madhya Pradesh, India.
+---
 
-## Pipeline Architecture
-1. **Satellite Earth Observation:** Landsat Collection 2 Level-2 Surface Reflectance (SR) and Surface Temperature (ST) multi-epoch composites (2000, 2010, 2020) processed in Google Earth Engine.
-2. **LULC Classification:** 5-class Random Forest with spatial-block cross-validation and area-adjusted accuracy assessment.
-3. **Thermal Impact Analysis:** Hot-season LST regression on NDVI and built-up density, controlled for spatial autocorrelation.
-4. **Predictive Spatio-Temporal Modeling:** CA-Markov simulation evaluated against a held-out epoch and a no-change null model.
-5. **Urban Conservation Decision Matrix:** 3×3 bivariate risk/heat matrix aggregating interventions into 500m planning grids with a sourced recommendation policy table.
+## Region of Interest
+- **Target Region:** Madhya Pradesh, India (`configs/region.yaml`, asset `FAO/GAUL/2015/level1`).
+- **Dynamic Extent:** Fully place-agnostic within the regional boundary. Users can click any location inside the state or specify latitude, longitude, and an analysis buffer radius (5 to 25 km).
+- **Default Checkpoints:** `[2000, 2004, 2008, 2012, 2016, 2020, 2025]`.
 
-## Execution Modes: Empirical vs. Synthetic Verification
+---
 
-GreenPlan supports two operational execution modes:
-1. **Empirical Satellite Mode (Default):** Requires verified regional satellite rasters in `data/satellite/{city}/` conforming to [`docs/data_contract.md`](docs/data_contract.md). Users with Earth Engine credentials can download empirical composites using `scripts/export_gee_composites.py`. If data files are missing, the pipeline raises an explicit `FileNotFoundError` explaining data requirements.
-2. **Synthetic Calibration / Testing Mode (`--synthetic`):** An offline mathematical calibration scaffold used for automated software testing, spatial-block cross-validation verification, and CI pipelines. **All metrics derived from synthetic mode (e.g. 97.2% OA, κ 0.957, R² 0.884, FoM 38.4%) represent software verification benchmarks, not empirical satellite observations.** All output tables and the interactive dashboard display prominent provenance labels (`synthetic_scaffold_testing` vs `empirical_satellite_data`) and warning badges.
+## Architecture & Peer-Review Defensibility
 
-## Installation & Setup
-```bash
-# Manage dependencies via uv
-uv sync --extra dev
-
-# Run test suite
-uv run python -m pytest tests/ -v
-
-# Code formatting & linting
-uv run ruff check
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Google Earth Engine                              │
+│  - Landsat 5, 7, 8, 9 Surface Reflectance & Thermal Collections        │
+│  - Roy et al. (2016) Harmonization + Cloud Masking (QA_PIXEL)           │
+│  - ESA WorldCover 2020 Independent Reference Proxy                      │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Server-side Compositing & Inference
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                         GreenPlan Core Engine                           │
+│  - Built-up Temporal Persistence Filter                                │
+│  - Spatial-Block Cross-Validation (Honest RF, no circular training)    │
+│  - Adjacent-Epoch Markov Matrix Scaling & CA Allocation                │
+│  - OLS Thermal Regression & Getis-Ord Gi* Hotspot Statistics           │
+│  - 3x3 Loss Risk vs. Thermal Stress Decision Matrix                    │
+└───────────────────┬────────────────────────────────┬───────────────────┘
+                    │                                │
+                    ▼                                ▼
+┌──────────────────────────────────────┐  ┌──────────────────────────────┐
+│        Offline Frozen Snapshots      │  │        FastAPI REST API      │
+│  - Bhopal (15 km buffer)             │  │  - POST /api/analyze         │
+│  - Kothri (15 km buffer, VIT Bhopal) │  │  - GET  /api/snapshots/{id}  │
+│  - SHA-256 Checksum Verification     │  │  - GET  /api/jobs/{id}       │
+└───────────────────┬──────────────────┘  └──────────────┬───────────────┘
+                    │                                    │
+                    └─────────────────┬──────────────────┘
+                                      ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                      Offline-Capable Web UI                             │
+│  - Leaflet Map (Vendored locally for offline operation)               │
+│  - Real-time Spatial Overlays (LULC, Thermal Hotspots, Decision Grid)  │
+│  - SVG Trend Charts & 3x3 Planning Priority Matrix                     │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Empirical Workflow (Bhopal)
+---
 
-To run GreenPlan on real Landsat satellite imagery for Bhopal:
+## Pre-generated Offline Snapshots
+To enable instant local exploration without network connectivity or Earth Engine credentials, GreenPlan includes frozen, cryptographically verified snapshots in `data/snapshots/`:
+- **Bhopal** (`data/snapshots/bhopal`): Madhya Pradesh capital metropolitan area.
+- **Kothri** (`data/snapshots/kothri`): Educational and peri-urban corridor (VIT Bhopal campus).
 
-1. **Export Composites from Google Earth Engine:**
-   Ensure `EE_PROJECT_ID` is set in your `.env` file.
-   ```bash
-   uv run python scripts/export_gee_composites.py --city bhopal
-   ```
-   This initiates Earth Engine export tasks to Google Drive for:
-   - `composite_2000.tif` (Landsat 5 TM with Roy et al. harmonization)
-   - `composite_2010.tif` (Landsat 5 TM with Roy et al. harmonization)
-   - `composite_2020.tif` (Landsat 8 OLI + Thermal band in Kelvin)
-   - `worldcover_2020.tif` (ESA WorldCover 2020 10m independent reference)
+Every snapshot is committed with its rasters (`.tif`), inputs (`inputs.npz`), metrics (`results.json`), transparent visual overlays (`.png`), and cryptographic manifest (`checksums.json`).
 
-2. **Download from Google Drive:**
-   Download the four generated GeoTIFF files from your Google Drive into:
-   ```text
-   data/raw/bhopal/
-   ```
+---
 
-3. **Build the Empirical Dataset:**
-   Remap WorldCover to GreenPlan taxonomy, train an honest Random Forest against the proxy reference with 4-fold spatial-block CV, and export contract rasters:
-   ```bash
-   uv run python scripts/build_empirical_dataset.py --city bhopal --raw data/raw/bhopal --out data/satellite/bhopal
-   ```
+## Installation & Setup
 
-4. **Execute GreenPlan Pipeline:**
-   ```bash
-   uv run python -m greenplan.cli run --city bhopal
-   ```
+```bash
+# Clone the repository
+git clone https://github.com/Rohan12190/Gis_project.git
+cd Gis_project
+git checkout rebuild/real-gis
 
-5. **Audit Run Results:**
-   ```bash
-   uv run python scripts/check_run.py
-   ```
+# Install dependencies using uv
+uv sync
 
-6. **Serve Interactive Dashboard:**
-   ```bash
-   uv run python -m greenplan.cli serve
-   ```
+# (Optional) Configure Google Earth Engine credentials in .env
+echo "EE_PROJECT_ID=your-project-id" > .env
+```
 
+---
 
+## Command-Line Interface (CLI)
+
+```bash
+# 1. Validate configuration files
+uv run python -m greenplan.cli validate-config
+
+# 2. Train or benchmark the regional classifier against ESA WorldCover 2020
+uv run python -m greenplan.cli train-model --n-samples 2000
+
+# 3. Run satellite analysis for a custom point in Madhya Pradesh
+uv run python -m greenplan.cli analyze --lat 23.25 --lon 77.41 --radius 15 --name Bhopal
+
+# 4. Manage offline snapshots
+uv run python -m greenplan.cli snapshot list
+uv run python -m greenplan.cli snapshot verify
+uv run python -m greenplan.cli snapshot create --id sehore --lat 23.20 --lon 77.08 --radius 10
+
+# 5. Launch the FastAPI server and interactive web UI
+uv run python -m greenplan.cli serve --host 0.0.0.0 --port 8000
+```
+
+---
+
+## Web Dashboard & REST API
+Run `uv run python -m greenplan.cli serve` and open [http://localhost:8000](http://localhost:8000).
+
+- **Map Viewer:** Interactive Leaflet interface with boundary of Madhya Pradesh.
+- **Instant Snapshots:** One-click loading of Bhopal and Kothri offline data (~50 ms load time).
+- **Point-and-Click Analysis:** Click anywhere within MP to queue a live Earth Engine run.
+- **Overlay Toggles:** Baseline LULC, Recent LULC, Urban Expansion, Thermal Hotspots, and 3x3 Planning Matrix.
+- **Visual Analytics:** SVG Historical NDVI trends (2000–2025) and CA-Markov 2035 scenario comparisons (BAU, Conservation, Infill).
+- **API Endpoints:**
+  - `GET /api/status`: Check GEE connectivity and snapshot availability.
+  - `GET /api/region`: GeoJSON boundary for Madhya Pradesh.
+  - `GET /api/snapshots`: List available offline snapshots.
+  - `GET /api/snapshots/{id}`: Detailed snapshot metrics and overlay URLs.
+  - `POST /api/analyze`: Submit live analysis job.
+  - `GET /api/jobs/{id}`: Poll job status and fetch results.
+
+---
+
+## Testing & Quality Assurance
+
+```bash
+# Run automated test suite
+uv run python -m pytest tests/ -v -m "not live"
+
+# Code formatting and linting
+uv run ruff check
+
+# Run performance and memory benchmarks
+uv run python scripts/benchmark.py
+```
