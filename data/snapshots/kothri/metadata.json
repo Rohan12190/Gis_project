@@ -1,0 +1,37 @@
+{
+  "snapshot_id": "kothri",
+  "name": "Kothri",
+  "lat": 23.0775,
+  "lon": 76.8513,
+  "radius_km": 10.0,
+  "checkpoints": [
+    2000,
+    2004,
+    2008,
+    2012,
+    2016,
+    2020,
+    2025
+  ],
+  "crs": "EPSG:32643",
+  "headline": {
+    "run_id": "_staging",
+    "study_area": "Kothri",
+    "baseline_year": 2000,
+    "recent_year": 2025,
+    "green_cover_pct_baseline": 0.84,
+    "green_cover_pct_recent": 0.44,
+    "net_green_loss_sqkm": 1.76,
+    "builtup_growth_sqkm": 161.358,
+    "mean_lst_celsius_recent": 51.47,
+    "high_priority_conservation_sqkm": 13.957,
+    "farmland_pct_baseline": 69.4,
+    "farmland_pct_recent": 38.7,
+    "builtup_pct_baseline": 1.4,
+    "builtup_pct_recent": 38.2,
+    "water_pct": 0.4,
+    "data_source": "landsat_gee_live",
+    "accuracy_reference": "ESA WorldCover 2020 (proxy reference)"
+  },
+  "thumbnail_file": "thumbnail.png"
+}
