@@ -145,6 +145,7 @@ def run_pipeline(
         coords,
         feature_names,
         n_estimators=cfg.rf_num_trees,
+        min_samples_split=cfg.rf_min_split,
         num_classes=5,
         seed=cfg.random_seed,
     )

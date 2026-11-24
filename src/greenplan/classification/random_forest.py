@@ -55,6 +55,7 @@ def train_and_evaluate_rf(
     coords: np.ndarray,
     feature_names: List[str],
     n_estimators: int = 100,
+    min_samples_split: int = 2,
     num_classes: int = 5,
     seed: int = 42,
 ) -> Dict:
@@ -66,6 +67,7 @@ def train_and_evaluate_rf(
         coords: (N, 2) spatial coordinates.
         feature_names: List of p feature names.
         n_estimators: Number of trees.
+        min_samples_split: Minimum number of samples required to split an internal node.
         num_classes: Fixed number of classes in taxonomy (default 5, prevents absent-class failure).
         seed: Random seed.
     """
@@ -79,7 +81,11 @@ def train_and_evaluate_rf(
         if len(train_idx) == 0 or len(val_idx) == 0:
             continue
         rf_fold = RandomForestClassifier(
-            n_estimators=n_estimators, max_features="sqrt", random_state=seed, n_jobs=-1
+            n_estimators=n_estimators,
+            min_samples_split=min_samples_split,
+            max_features="sqrt",
+            random_state=seed,
+            n_jobs=-1,
         )
         rf_fold.fit(features[train_idx], labels[train_idx])
         preds = rf_fold.predict(features[val_idx])
@@ -93,7 +99,11 @@ def train_and_evaluate_rf(
 
     # Final model fit on all data for spatial prediction
     final_rf = RandomForestClassifier(
-        n_estimators=n_estimators, max_features="sqrt", random_state=seed, n_jobs=-1
+        n_estimators=n_estimators,
+        min_samples_split=min_samples_split,
+        max_features="sqrt",
+        random_state=seed,
+        n_jobs=-1,
     )
     final_rf.fit(features, labels)
 

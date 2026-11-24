@@ -63,9 +63,12 @@
   - `src/greenplan/viewer.py`: Relabeled "GEE ML Prediction" to "Multi-Spectral Index Threshold Analysis (NDVI/NDBI/MNDWI)", documented exact spectral indices and classification thresholds used, and added explicit frontend error display on authentication failure.
   - `scripts/verify_catalog.py`: Script to verify all catalogued USGS scene IDs against Earth Engine when authenticated and flag missing or inaccessible assets.
 - **Tests Added:** `tests/test_gee.py` (`test_get_landsat_collection_id_epochs`, `test_fetch_scene_metadata_returns_none_for_uncatalogued`, `test_query_live_landsat_scene_unauthenticated_does_not_fake`, `test_predict_location_gee_unauthenticated_explicit_error`, `test_gee_presets_no_expired_urls_or_hardcoded_projects`).
-  - Added target allocation verification in `ca.py` warning if discrepancies exceed 1% of class area.
-  - Aligned `compute_figure_of_merit()` docstrings, variable naming, and return keys with Pontius et al. (2008): A (misses), B (hits), C (wrong-category), D (false alarms); added Pontius Quantity Disagreement and Allocation Disagreement.
-  - Loaded `configs/scenarios.yaml` dynamically in `markov.py` and `pipeline.py` to drive scenario simulations rather than hardcoding them.
-  - Computed future projection step sizes from `(proj_yr - recent_yr) / dt` with documented Markov stationarity assumptions.
-  - Implemented multi-seed sensitivity validation (5 seeds) reporting mean and standard deviation of FoM, $K_{\text{location}}$, $K_{\text{quantity}}$, Quantity Disagreement, Allocation Disagreement, and Null Model comparison to `metrics/simulation.json`.
-- **Tests Added:** `tests/test_ca.py` (`test_ca_exact_area_allocation_small_grid`, `test_multi_seed_simulation_reports_mean_and_std`), `tests/test_metrics.py` (`test_pontius_figure_of_merit_hand_worked_example`).
+
+## Task 8: CLI Subcommands Cleanup, Unused Config Wiring & CI Workflow
+- **Files Modified/Created:**
+  - `src/greenplan/cli.py`: Cleaned the Typer CLI to expose only functional, production-ready commands (`validate_config`, `run`, `verify_gee`, `serve`), removing dummy placeholder subcommands (`imagery`, `classify`, `drivers`, `thermal`, `simulate`, `plan`); ensured `--synthetic` defaults to `False` requiring explicit opt-in.
+  - `src/greenplan/classification/random_forest.py` & `src/greenplan/pipeline.py`: Wired `min_samples_split=cfg.rf_min_split` into `train_and_evaluate_rf()` and `RandomForestClassifier`.
+  - `pyproject.toml`: Verified Python constraint (`requires-python = ">=3.11"`) and Ruff lint target (`target-version = "py311"`) are aligned.
+  - `.github/workflows/ci.yml`: Created automated GitHub Actions CI workflow running on push and PR to main, testing across Python 3.11 and 3.12 with `uv sync`, `ruff check`, and `pytest tests/ -v`.
+  - `docs/decisions/002_interim_serve_implementation.md`: Documented ADR 002 for the interim `serve` web server implementation and its relationship with the future FastAPI architecture (ADR 001).
+- **Tests Added:** `tests/test_cli.py` (`test_cli_validate_config`, `test_cli_dead_subcommands_removed`, `test_rf_min_split_honored`, `test_ci_workflow_valid_yaml`).
