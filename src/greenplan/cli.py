@@ -35,5 +35,39 @@ def validate_config(
     )
 
 
+@app.command()
+def train_model(
+    region: Path = typer.Option("configs/region.yaml", help="Path to region config YAML"),
+    worldcover_mapping: Path = typer.Option(
+        "configs/worldcover_mapping.yaml", help="Path to WorldCover mapping YAML"
+    ),
+    output_dir: Path = typer.Option("models", help="Directory to save model metrics"),
+    samples_path: Path = typer.Option(
+        "data/training/samples.csv", help="Path to training samples CSV cache"
+    ),
+    resample: bool = typer.Option(
+        False, "--resample", help="Force re-sampling from Earth Engine even if cache exists"
+    ),
+):
+    """Train regional land-cover Random Forest model using spatial-block cross-validation."""
+    from greenplan.models.train_regional_model import run_training_pipeline
+
+    typer.echo("Initiating regional land-cover model training...")
+    metrics = run_training_pipeline(
+        region_config=region,
+        worldcover_mapping=worldcover_mapping,
+        samples_path=samples_path,
+        output_dir=output_dir,
+        force_resample=resample,
+    )
+    typer.echo(f"Training Complete! Overall Accuracy: {metrics['overall_accuracy']:.4f}")
+    typer.echo(f"Kappa: {metrics['kappa']:.4f} | Macro F1: {metrics['macro_f1']:.4f}")
+    typer.echo(
+        f"Quantity Disagreement: {metrics['quantity_disagreement']:.4f} | "
+        f"Allocation Disagreement: {metrics['allocation_disagreement']:.4f}"
+    )
+    typer.echo(f"Metrics written to '{output_dir}/regional_model_metrics.json'")
+
+
 if __name__ == "__main__":
     app()
