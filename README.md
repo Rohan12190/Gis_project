@@ -79,8 +79,8 @@ To enable instant local exploration without GEE execution, GreenPlan includes fr
 Every snapshot is committed with its rasters (`.npy`), inputs (`inputs.npz`), metrics (`results.json`), transparent visual overlays (`.png`), RGB thumbnail, and SHA-256 `checksums.json`.
 
 *Measured Performance Benchmark (`scripts/benchmark.py`):*
-- **Bhopal:** 16.23 MB on disk, SHA-256 check passed in <1 ms, all 20 multi-epoch rasters loaded in 227 ms, peak memory 24.27 MB in RAM.
-- **Kothri:** 16.69 MB on disk, SHA-256 check passed in <1 ms, all 20 multi-epoch rasters loaded in 215 ms, peak memory 23.96 MB in RAM.
+- **Bhopal:** 16.23 MB on disk, full SHA-256 integrity check verified in 28 ms, all 20 multi-epoch rasters loaded in 228 ms, peak memory 24.27 MB in RAM.
+- **Kothri:** 16.69 MB on disk, full SHA-256 integrity check verified in 28 ms, all 20 multi-epoch rasters loaded in 213 ms, peak memory 23.96 MB in RAM.
 - **Live GEE Pipeline Runtimes (from `results.json`):** Bhopal complete workflow in 23.75s; Kothri complete workflow in 45.13s.
 
 ---

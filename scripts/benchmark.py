@@ -10,7 +10,7 @@ import numpy as np
 # Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from greenplan.snapshots import list_snapshots, load_snapshot, verify_snapshots
+from greenplan.snapshots import list_snapshots, load_snapshot
 
 
 def get_dir_size(path: Path) -> float:
@@ -38,16 +38,18 @@ def benchmark_snapshots():
     print(f"{'Snapshot':<12} | {'Disk Size':<10} | {'SHA-256 Check':<15} | {'Load All Rasters':<18} | {'Peak RAM':<10}")
     print("-" * 80)
 
-    verifications = verify_snapshots()
-
     for s in snapshots:
         snap_id = s["snapshot_id"]
         snap_dir = Path("data/snapshots") / snap_id
         disk_mb = get_dir_size(snap_dir)
 
-        # 1. Verification time
+        # 1. Real SHA-256 integrity verification time (hashing all files against checksums.json)
         t0 = time.perf_counter()
-        is_valid = verifications.get(snap_id, False)
+        try:
+            load_snapshot(snap_id, base_dir=Path("data/snapshots"))
+            is_valid = True
+        except Exception:
+            is_valid = False
         verify_time_ms = (time.perf_counter() - t0) * 1000
 
         if not is_valid:

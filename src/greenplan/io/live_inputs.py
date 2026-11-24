@@ -194,10 +194,46 @@ def build_live_inputs(
     crs_transform = [30.0, 0.0, float(min_x), 0.0, -30.0, float(max_y)]
 
     def _pull_aligned_raster(img: ee.Image) -> np.ndarray:
-        """Reproject image onto the fixed UTM grid to prevent shape discrepancies or edge padding."""
+        """Reproject image onto the fixed UTM grid and pull array, using 512x512 tiling if large or on memory limit."""
         reprojected = img.reproject(crs=utm_crs, crsTransform=crs_transform)
-        arr = geemap.ee_to_numpy(reprojected, region=aoi_utm)
-        return arr.squeeze()
+        w = int(round((max_x - min_x) / 30.0))
+        h = int(round((max_y - min_y) / 30.0))
+
+        # For smaller footprints (<= 512x512), try single-shot extraction first
+        if w <= 512 and h <= 512:
+            try:
+                arr = geemap.ee_to_numpy(reprojected, region=aoi_utm)
+                return arr.squeeze()
+            except Exception as exc:
+                logger.warning(
+                    "Single-shot raster fetch failed (%s). Falling back to 512x512 tiled extraction.", exc
+                )
+
+        # Robust tiled extraction in 512x512 blocks to stay strictly within EE compute limits
+        tile_size = 512
+        out_arr = None
+
+        for r0 in range(0, h, tile_size):
+            r1 = min(r0 + tile_size, h)
+            for c0 in range(0, w, tile_size):
+                c1 = min(c0 + tile_size, w)
+                t_min_x = min_x + c0 * 30.0
+                t_max_x = min_x + c1 * 30.0
+                t_max_y = max_y - r0 * 30.0
+                t_min_y = max_y - r1 * 30.0
+                t_geom = ee.Geometry.Rectangle(
+                    [float(t_min_x), float(t_min_y), float(t_max_x), float(t_max_y)],
+                    proj=utm_crs,
+                    geodesic=False,
+                )
+                tile = geemap.ee_to_numpy(reprojected, region=t_geom).squeeze()
+                if out_arr is None:
+                    out_arr = np.zeros((h, w), dtype=tile.dtype)
+                out_arr[r0:r1, c0:c1] = tile
+
+        if out_arr is None:
+            raise RuntimeError(f"Failed to extract raster pixels for AOI dimensions ({h}, {w}).")
+        return out_arr
 
     place_name = name or reverse_geocode_place(lat, lon)
 

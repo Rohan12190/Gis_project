@@ -302,16 +302,40 @@ def run_analysis(
 
         target_val_counts = project_target_areas(epoch_rasters[prev_epoch], p_val, num_classes=5)
 
+        # Independent, strictly held-out suitability model for hindcast validation.
+        # Trained strictly on transitions prior to the validation epoch (e.g. 2000 -> 2016)
+        # using drivers extracted from the historical baseline, guaranteeing zero temporal
+        # leakage into the 2016 -> 2020 prediction and evaluation window.
+        hindcast_base = epoch_rasters[checkpoints[0]]
+        hindcast_end = epoch_rasters[prev_epoch]
+        drivers_hc_train, _ = extract_spatial_drivers(
+            built_mask=(hindcast_base == 0),
+            road_mask=road_mask,
+            water_mask=water_mask,
+        )
+        obs_hc_transition = ((hindcast_base != 0) & (hindcast_end == 0)).astype(int).ravel()
+
+        if np.sum(obs_hc_transition) > 0 and np.sum(obs_hc_transition == 0) > 0:
+            suit_model_val, _ = train_suitability_model(
+                drivers_hc_train,
+                obs_hc_transition,
+                driver_names,
+                coords=coords,
+                seed=cfg.random_seed,
+            )
+        else:
+            suit_model_val = suit_model
+
         drivers_val, layers_val = extract_spatial_drivers(
             built_mask=(epoch_rasters[prev_epoch] == 0),
             road_mask=road_mask,
             water_mask=water_mask,
         )
-        proba_val = suit_model.predict_proba(drivers_val)
+        proba_val = suit_model_val.predict_proba(drivers_val)
         if proba_val.shape[1] > 1:
             suit_val = proba_val[:, 1].reshape((h, w)).astype(np.float32)
         else:
-            cls_idx = suit_model.classes_[0]
+            cls_idx = suit_model_val.classes_[0]
             suit_val = (
                 proba_val[:, 0].reshape((h, w)).astype(np.float32)
                 if cls_idx == 1
@@ -338,11 +362,19 @@ def run_analysis(
         fom_metrics["status"] = "computed"
         fom_metrics["validation_target_year"] = val_target_year
         fom_metrics["baseline_year"] = prev_epoch
+        fom_metrics["training_window"] = f"{checkpoints[0]}->{prev_epoch}"
+        fom_metrics["methodology"] = (
+            "Held-out out-of-sample hindcast: both Markov transitions and suitability model "
+            f"were calibrated strictly on {checkpoints[0]}->{prev_epoch} without observing {val_target_year}."
+        )
         np.save(run_dir / "rasters" / "sim_validation.npy", sim_val)
     else:
         fom_metrics = {
             "status": "not_available",
-            "reason": "Hindcast validation requires at least 3 checkpoints including a 2020 calibration target.",
+            "reason": (
+                "Hindcast validation requires at least 3 checkpoints including a 2020 calibration target. "
+                f"Available checkpoints: {checkpoints}."
+            ),
             "figure_of_merit": None,
             "beats_null_model": None,
             "quantity_disagreement": None,

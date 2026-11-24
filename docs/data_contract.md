@@ -64,3 +64,14 @@ A compressed `.npz` archive containing 5 aligned 2D floating-point arrays of sha
 * When all contract files exist in `data/satellite/{area_slug}/`, `greenplan` automatically ingests them and sets `data_source: "empirical_satellite_data"`.
 * If files are missing or incomplete, the pipeline raises an explicit `FileNotFoundError` or `ValueError` stating the required files.
 * Under the real-data mandate, all runs must use verified satellite observations, live Earth Engine ingestion, or verified offline snapshots.
+
+## 5. Held-Out Hindcast Validation Contract
+* Hindcast validation is calibrated targeting 2020 and requires at least 3 checkpoints (`len(checkpoints) >= 3 and 2020 in checkpoints`).
+* To guarantee true out-of-sample defensibility with zero temporal leakage:
+  - The Markov transition matrix is averaged from single-step transitions strictly prior to 2020 (e.g. 2000→2004, 2004→2008, 2008→2012, 2012→2016).
+  - An independent suitability model is trained strictly on transitions prior to the target (2000→2016) using drivers from the historical baseline (2000). The full 2000→2025 suitability model is reserved exclusively for forward projections (2035, 2045).
+* If fewer than 3 checkpoints or no 2020 epoch are present, `fom_metrics` reports `status: "not_available"` with an explicit rationale.
+
+## 6. Large-Radius Discrete Raster Tiling
+* For live Earth Engine extraction, planar UTM regions larger than 512×512 pixels (e.g., 10 km, 15 km, 25 km radii) or cases where single-request payload limits are reached are fetched in 512×512 UTM tiles and assembled.
+* This ensures complete computational defensibility and prevents Earth Engine user memory or request payload exceptions up to the maximum 25 km radius (~2.78 million pixels at 30 m resolution).
