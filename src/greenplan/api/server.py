@@ -114,6 +114,7 @@ def get_system_status() -> Dict[str, Any]:
     return {
         "status": "online" if online else "offline_ready",
         "earth_engine_connected": online,
+        "gee_available": online,
         "region_name": reg_cfg.name,
         "boundary_asset": reg_cfg.boundary_asset,
         "default_checkpoints": reg_cfg.default_checkpoints,

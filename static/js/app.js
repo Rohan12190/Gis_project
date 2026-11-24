@@ -134,13 +134,14 @@ async function checkStatus() {
   try {
     const res = await fetch("/api/status");
     const data = await res.json();
-    state.isOnline = data.gee_available;
+    state.isOnline = Boolean(data.earth_engine_connected || data.gee_available || data.status === "online");
     state.snapshots = data.snapshots || [];
 
     const badge = document.getElementById("status-badge");
     if (state.isOnline) {
       badge.className = "badge badge-online";
       badge.innerHTML = `<span class="dot"></span> Online (GEE Live)`;
+      document.getElementById("btn-analyze").title = "Click to run live Earth Engine satellite analysis";
     } else {
       badge.className = "badge badge-offline";
       badge.innerHTML = `<span class="dot"></span> Offline (Snapshots Only)`;
