@@ -30,6 +30,14 @@ class PipelineInputs:
     reference_2020: Optional[np.ndarray] = None
     reference_metrics: Optional[Dict] = None
     road_mask: Optional[np.ndarray] = None
+    epoch_rasters: Optional[Dict[int, np.ndarray]] = None
+    checkpoints: Optional[list[int]] = None
+    ndvi_first: Optional[np.ndarray] = None
+    ndvi_latest: Optional[np.ndarray] = None
+    thermal_first: Optional[np.ndarray] = None
+    thermal_latest: Optional[np.ndarray] = None
+    annual_greenness: Optional[list[dict]] = None
+    place_name: Optional[str] = None
 
 
 def load_real_inputs(data_dir: Path | str) -> PipelineInputs:
