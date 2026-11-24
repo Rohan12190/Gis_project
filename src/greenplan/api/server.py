@@ -1,0 +1,275 @@
+"""FastAPI backend server for GreenPlan real-data GIS analysis, runs, and snapshots."""
+
+import json
+import logging
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from greenplan.config import load_region_config
+from greenplan.gee.client import init_ee, is_ee_initialized
+from greenplan.io.live_inputs import build_live_inputs, validate_point_in_region
+from greenplan.pipeline import run_analysis
+from greenplan.snapshots import list_snapshots, load_snapshot
+
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="GreenPlan: Real-Data GIS Planning Engine",
+    description="Real satellite-based urban growth, green space loss, and urban heat island analysis.",
+    version="2.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+JOBS_STORE: Dict[str, Dict[str, Any]] = {}
+
+
+class AnalyzeRequest(BaseModel):
+    """Payload for initiating a live satellite analysis run."""
+
+    lat: float = Field(..., description="Target latitude coordinate")
+    lon: float = Field(..., description="Target longitude coordinate")
+    radius_km: float = Field(10.0, ge=1.0, le=25.0, description="Analysis buffer radius in km")
+    epochs: Optional[List[int]] = Field(None, description="Optional custom checkpoint epochs")
+    name: Optional[str] = Field(None, description="Optional human-readable study area label")
+
+
+def _execute_analysis_job(job_id: str, payload: AnalyzeRequest, run_dir: Path) -> None:
+    """Background task executing the complete live analysis workflow."""
+    try:
+        JOBS_STORE[job_id]["status"] = "running"
+
+        def _progress(msg: str, frac: float):
+            JOBS_STORE[job_id]["progress_pct"] = int(frac * 100)
+            JOBS_STORE[job_id]["message"] = msg
+
+        inputs = build_live_inputs(
+            lat=payload.lat,
+            lon=payload.lon,
+            radius_km=payload.radius_km,
+            epochs=payload.epochs,
+            name=payload.name,
+            progress=_progress,
+        )
+
+        summary = run_analysis(inputs, run_dir, progress=_progress)
+
+        JOBS_STORE[job_id]["status"] = "completed"
+        JOBS_STORE[job_id]["progress_pct"] = 100
+        JOBS_STORE[job_id]["message"] = "Analysis finished successfully!"
+        JOBS_STORE[job_id]["run_id"] = run_dir.name
+        JOBS_STORE[job_id]["result_url"] = f"/api/runs/{run_dir.name}"
+        JOBS_STORE[job_id]["summary"] = summary.model_dump()
+
+    except Exception as exc:
+        logger.exception("Analysis job '%s' failed: %s", job_id, exc)
+        JOBS_STORE[job_id]["status"] = "failed"
+        JOBS_STORE[job_id]["error"] = str(exc)
+        JOBS_STORE[job_id]["message"] = f"Failed: {exc}"
+
+
+@app.get("/api/status")
+def get_system_status() -> Dict[str, Any]:
+    """Return backend operational status, regional boundary config, and Earth Engine state."""
+    try:
+        init_ee()
+        online = is_ee_initialized()
+    except Exception:
+        online = False
+
+    reg_cfg = load_region_config("configs/region.yaml")
+    return {
+        "status": "online" if online else "offline_ready",
+        "earth_engine_connected": online,
+        "region_name": reg_cfg.name,
+        "boundary_asset": reg_cfg.boundary_asset,
+        "default_checkpoints": reg_cfg.default_checkpoints,
+        "default_radius_km": reg_cfg.default_radius_km,
+        "max_radius_km": reg_cfg.max_radius_km,
+    }
+
+
+@app.get("/api/region")
+def get_region_boundary() -> Any:
+    """Return regional boundary polygon as GeoJSON for frontend interactive mapping."""
+    cached_geojson = Path("configs/region_boundary.geojson")
+    if cached_geojson.exists():
+        with open(cached_geojson, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    try:
+        import ee
+
+        init_ee()
+        reg_cfg = load_region_config("configs/region.yaml")
+        region_fc = ee.FeatureCollection(reg_cfg.boundary_asset).filter(
+            ee.Filter.eq(reg_cfg.filter_field, reg_cfg.filter_value)
+        )
+        geo = region_fc.geometry().getInfo()
+        with open(cached_geojson, "w", encoding="utf-8") as f:
+            json.dump(geo, f)
+        return geo
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Regional boundary unavailable offline: {e}. Run with live network once to cache.",
+        ) from e
+
+
+@app.post("/api/analyze")
+def submit_analysis(payload: AnalyzeRequest, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    """Validate requested point and launch background satellite analysis job."""
+    # 1. Point validation against regional boundary
+    try:
+        validate_point_in_region(payload.lat, payload.lon)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve)) from ve
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Earth Engine validation unavailable: {exc}. Ensure credentials are valid.",
+        ) from exc
+
+    job_id = f"job_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    run_dir = Path("outputs") / f"run_{job_id}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    JOBS_STORE[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "progress_pct": 0,
+        "message": "Queued for processing...",
+        "result_url": None,
+        "error": None,
+        "created_at": time.time(),
+    }
+
+    background_tasks.add_task(_execute_analysis_job, job_id, payload, run_dir)
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job_status(job_id: str) -> Dict[str, Any]:
+    """Query progress and result status for an active or completed background job."""
+    if job_id not in JOBS_STORE:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    return JOBS_STORE[job_id]
+
+
+@app.get("/api/runs")
+def list_runs(base_dir: Path = Path("outputs")) -> List[Dict[str, Any]]:
+    """List historical analysis runs with headline KPIs."""
+    if not base_dir.exists():
+        return []
+
+    runs = []
+    for r_dir in sorted(base_dir.iterdir(), reverse=True):
+        if r_dir.is_dir() and (r_dir / "summary.json").exists():
+            try:
+                with open(r_dir / "summary.json", "r", encoding="utf-8") as f:
+                    summary = json.load(f)
+                runs.append({
+                    "run_id": r_dir.name,
+                    "study_area": summary.get("study_area", r_dir.name),
+                    "baseline_year": summary.get("baseline_year"),
+                    "recent_year": summary.get("recent_year"),
+                    "green_loss_sqkm": summary.get("net_green_loss_sqkm"),
+                    "urban_growth_sqkm": summary.get("builtup_growth_sqkm"),
+                    "mean_lst_recent": summary.get("mean_lst_celsius_recent"),
+                })
+            except Exception:
+                continue
+    return runs
+
+
+@app.get("/api/runs/{run_id}")
+def get_run_results(run_id: str, base_dir: Path = Path("outputs")) -> Any:
+    """Retrieve complete results.json and metadata for a completed run."""
+    run_path = base_dir / run_id / "results.json"
+    if not run_path.exists():
+        raise HTTPException(status_code=404, detail=f"Run results not found for '{run_id}'.")
+    with open(run_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.get("/api/runs/{run_id}/overlays/{overlay_name}.png")
+def get_run_overlay(run_id: str, overlay_name: str, base_dir: Path = Path("outputs")) -> FileResponse:
+    """Serve georeferenced transparent PNG overlay for Leaflet dashboard map."""
+    figures_dir = base_dir / run_id / "figures"
+    candidates = [
+        figures_dir / f"overlay_{overlay_name}.png",
+        figures_dir / f"{overlay_name}.png",
+    ]
+    for p in candidates:
+        if p.exists():
+            return FileResponse(p, media_type="image/png")
+
+    raise HTTPException(status_code=404, detail=f"Overlay '{overlay_name}' not found for run '{run_id}'.")
+
+
+@app.get("/api/snapshots")
+def get_available_snapshots() -> List[Dict[str, Any]]:
+    """List pre-computed offline snapshots (e.g. Bhopal, Kothri)."""
+    return list_snapshots()
+
+
+@app.get("/api/snapshots/{snapshot_id}")
+def get_snapshot_details(snapshot_id: str) -> Any:
+    """Load verified results and metadata for a specific offline snapshot."""
+    try:
+        data = load_snapshot(snapshot_id)
+        return data["results"]
+    except FileNotFoundError as fe:
+        raise HTTPException(status_code=404, detail=str(fe)) from fe
+    except ValueError as ve:
+        raise HTTPException(status_code=409, detail=f"Integrity check failed: {ve}") from ve
+
+
+@app.get("/api/snapshots/{snapshot_id}/overlays/{overlay_name}.png")
+def get_snapshot_overlay(
+    snapshot_id: str, overlay_name: str, base_dir: Path = Path("data/snapshots")
+) -> FileResponse:
+    """Serve transparent overlay PNG from a verified snapshot directory."""
+    overlays_dir = base_dir / snapshot_id / "overlays"
+    candidates = [
+        overlays_dir / f"overlay_{overlay_name}.png",
+        overlays_dir / f"{overlay_name}.png",
+    ]
+    for p in candidates:
+        if p.exists():
+            return FileResponse(p, media_type="image/png")
+
+    raise HTTPException(
+        status_code=404, detail=f"Overlay '{overlay_name}' not found for snapshot '{snapshot_id}'."
+    )
+
+
+@app.get("/api/snapshots/{snapshot_id}/thumbnail.png")
+def get_snapshot_thumbnail(
+    snapshot_id: str, base_dir: Path = Path("data/snapshots")
+) -> FileResponse:
+    """Serve RGB true-color thumbnail image for snapshot card."""
+    thumb_path = base_dir / snapshot_id / "thumbnail.png"
+    if not thumb_path.exists():
+        raise HTTPException(status_code=404, detail=f"Thumbnail not found for snapshot '{snapshot_id}'.")
+    return FileResponse(thumb_path, media_type="image/png")
+
+
+# Mount static frontend files if static directory exists
+static_dir = Path("static")
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory="static", html=True), name="static")

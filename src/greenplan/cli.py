@@ -194,5 +194,18 @@ def snapshot_list(
         )
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", help="Server host IP address"),
+    port: int = typer.Option(8000, "--port", help="Server port"),
+    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload for development"),
+):
+    """Launch GreenPlan FastAPI backend server and dashboard UI."""
+    import uvicorn
+
+    typer.echo(f"Starting GreenPlan API & Dashboard server on http://{host}:{port} ...")
+    uvicorn.run("greenplan.api.server:app", host=host, port=port, reload=reload)
+
+
 if __name__ == "__main__":
     app()
