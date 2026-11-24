@@ -51,11 +51,22 @@ def sample_reference_points(
 def compute_confusion_matrix(
     y_true: np.ndarray, y_pred: np.ndarray, num_classes: int
 ) -> np.ndarray:
-    """Compute k x k confusion matrix where rows are actual (reference) and cols are predicted (map)."""
-    cm = np.zeros((num_classes, num_classes), dtype=np.int64)
-    valid = (y_true >= 0) & (y_true < num_classes) & (y_pred >= 0) & (y_pred < num_classes)
-    for t, p in zip(y_true[valid], y_pred[valid]):
-        cm[t, p] += 1
+    """Compute k x k confusion matrix where rows are actual (reference) and cols are predicted (map).
+
+    Vectorized implementation using np.bincount for high performance on 1M+ cell grids.
+    """
+    y_t = np.asarray(y_true).ravel()
+    y_p = np.asarray(y_pred).ravel()
+    valid = (y_t >= 0) & (y_t < num_classes) & (y_p >= 0) & (y_p < num_classes)
+    if not np.any(valid):
+        return np.zeros((num_classes, num_classes), dtype=np.int64)
+
+    encoded = y_t[valid].astype(np.int64) * num_classes + y_p[valid].astype(np.int64)
+    cm = (
+        np.bincount(encoded, minlength=num_classes**2)
+        .reshape((num_classes, num_classes))
+        .astype(np.int64)
+    )
     return cm
 
 
@@ -214,9 +225,8 @@ def compute_figure_of_merit(
     # Pontius Kappa components (K_standard, K_location, K_quantity)
     # Using cross-tabulation between act_t2 and sim_t2
     num_classes = max(int(np.max(act_t2)), int(np.max(sim_t2))) + 1
-    cm_sim = np.zeros((num_classes, num_classes), dtype=np.int64)
-    for a, s in zip(act_t2, sim_t2):
-        cm_sim[a, s] += 1
+    flat_idx = act_t2 * num_classes + sim_t2
+    cm_sim = np.bincount(flat_idx, minlength=num_classes**2).reshape((num_classes, num_classes))
 
     total = np.sum(cm_sim)
     if total > 0:

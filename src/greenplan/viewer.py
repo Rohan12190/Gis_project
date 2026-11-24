@@ -51,16 +51,22 @@ def generate_dynamic_narrative(summary: Dict, city_key: str) -> Dict:
     farm_recent = summary.get("farmland_pct_recent", 0.0)
     data_source = summary.get("data_source", "empirical_satellite_data")
     is_synth = "synthetic" in data_source
+    acc_ref = summary.get(
+        "accuracy_reference",
+        "Synthetic Ground Truth (Scaffold Benchmark)"
+        if is_synth
+        else "ESA WorldCover 2020 (proxy reference)",
+    )
 
     title = summary.get("study_area", city_key.capitalize())
-    badge = "Synthetic Calibration Run" if is_synth else "Verified Satellite Run"
+    badge = "SYNTHETIC DEMO" if is_synth else "EMPIRICAL (proxy reference)"
 
     desc = (
         f"<ul class='bullet-list'>"
         f"<li><strong>Landscape Composition:</strong> Built-up covers {built_recent:.1f}%, green space covers {green_recent:.1f}%, and farmland covers {farm_recent:.1f}%.</li>"
         f"<li><strong>20-Year Dynamics:</strong> Net built-up expansion is {built_growth:+.2f} km², with net green space change of {-green_loss:+.2f} km².</li>"
         f"<li><strong>Thermal Environment:</strong> Mean summer surface temperature is {lst_mean:.1f} °C.</li>"
-        f"<li><strong>Data Provenance:</strong> {data_source.replace('_', ' ').title()}.</li>"
+        f"<li><strong>Data Provenance:</strong> {data_source.replace('_', ' ').title()} • Reference: {acc_ref}.</li>"
         f"</ul>"
     )
     takeaway = (
@@ -210,8 +216,9 @@ def build_region_payload(run_path: Path, city_key: str, gee_client: GEEClient) -
     }
 
 
-def generate_html_report(run_dir: Path) -> Path:
+def generate_html_report(run_dir: Path | str) -> Path:
     """Generate comprehensive multi-region interactive dashboard with Leaflet map and plain-English guides."""
+    run_dir = Path(run_dir)
     outputs_dir = run_dir.parent if run_dir.parent.name == "outputs" else Path("outputs")
     gee_client = GEEClient()
     gee_client.get_status()
@@ -2008,18 +2015,23 @@ async function runGeePrediction(name, lat, lon, radius, presetKey) {{
             }} else if (liveData && !liveData.success) {{
                 if (!presetKey) {{
                     if (prog) prog.style.display = 'none';
-                    alert(`Earth Engine authentication required.\\n\\n${{liveData.error || liveData.detail || ''}}\\n\\nRun 'earthengine authenticate' or provide EARTHENGINE_PROJECT / GEE_PROJECT in your environment.`);
+                    alert(`Earth Engine authentication required.\\n\\n${{liveData.error || liveData.detail || ''}}\\n\\nRun 'earthengine authenticate' or provide EE_PROJECT_ID in your environment.`);
                     return;
                 }}
             }}
         }}
     }} catch (e) {{
-        // Fallback to preset if available
+        console.error("Failed to connect to GreenPlan backend:", e);
+        if (!presetKey) {{
+            if (prog) prog.style.display = 'none';
+            alert(`Unable to reach the GreenPlan server.\\n\\nPlease ensure the server is running on http://localhost:8000 and try again.`);
+            return;
+        }}
     }}
 
     if (!result) {{
         if (prog) prog.style.display = 'none';
-        alert(`Earth Engine live analysis is currently unauthenticated on the server.\\n\\nTo query live Landsat satellite imagery for "${{name}}", run 'earthengine authenticate' or provide EARTHENGINE_PROJECT in your environment.`);
+        alert(`Earth Engine live analysis returned no data for "${{name}}". Please verify server status or choose another location.`);
         return;
     }}
 

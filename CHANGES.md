@@ -72,3 +72,37 @@
   - `.github/workflows/ci.yml`: Created automated GitHub Actions CI workflow running on push and PR to main, testing across Python 3.11 and 3.12 with `uv sync`, `ruff check`, and `pytest tests/ -v`.
   - `docs/decisions/002_interim_serve_implementation.md`: Documented ADR 002 for the interim `serve` web server implementation and its relationship with the future FastAPI architecture (ADR 001).
 - **Tests Added:** `tests/test_cli.py` (`test_cli_validate_config`, `test_cli_dead_subcommands_removed`, `test_rf_min_split_honored`, `test_ci_workflow_valid_yaml`).
+
+---
+
+## [Empirical Landsat Mode for Bhopal & Performance Vectorization]
+
+### 1. Vectorization & Performance Optimizations (Step 3)
+- **Vectorized Confusion Matrix & Cross-Tabulations:** Replaced slow Python `zip` loops with `np.bincount(flat_idx, minlength=k**2).reshape((k, k))` in:
+  - `src/greenplan/validation/metrics.py` (`compute_confusion_matrix`, `compute_figure_of_merit` Pontius Kappa calculations).
+  - `src/greenplan/classification/change_analysis.py` (`compute_transition_stats`).
+  - `src/greenplan/simulation/markov.py` (`compute_transition_matrix`).
+- **Vectorized Modal Filter:** Replaced slow generic Python loops in `apply_majority_filter` with vectorized per-class `scipy.ndimage.uniform_filter` and `np.argmax(counts, axis=0)`.
+- **Chunked Prediction & Subsampling:** Added `predict_raster_chunks` in `src/greenplan/classification/random_forest.py` and stratified subsampling (`max_train_samples=50000`) to prevent memory spikes on million-cell rasters.
+- **Safety & Coarse Resolution:** Added `--max-pixels` validation and `working_pixel_size_m` block-aggregation support in `src/greenplan/pipeline.py` and `src/greenplan/cli.py`.
+
+### 2. Empirical Dataset Exporter & Builder (Steps 1 & 2)
+- **GEE Composites Exporter (`scripts/export_gee_composites.py`):** Cloud-masked median composites over dry season for 2000, 2010 (Landsat 5 TM with Roy et al. 2016 harmonization), and 2020 (Landsat 8 OLI + ST_B10 thermal). Included ESA WorldCover 2020 (`ESA/WorldCover/v100`, band `Map`) aligned at 30m in EPSG:32643.
+- **Empirical Dataset Builder (`scripts/build_empirical_dataset.py`):**
+  - Remaps WorldCover codes using `configs/worldcover_mapping.yaml`.
+  - Computes 9 spectral features (Blue, Green, Red, NIR, SWIR1, SWIR2, NDVI, NDBI, MNDWI; no thermal or EBBI in classifier).
+  - Trains honest Random Forest against independent WorldCover reference using 4-fold spatial-block CV.
+  - Predicts full rasters for 2000, 2010, 2020 with vectorized majority filter.
+  - Performs multi-temporal sanity audit on implausible urban reversal transitions, with optional `--enforce-builtup-persistence` flag.
+  - Generates 3-panel quick-look verification figure `quicklook.png`.
+
+### 3. Empirical Pipeline Reporting & Inspection (Steps 4 & 5)
+- **Non-Circularity:** In empirical mode, pipeline loads independent proxy reference metrics (`accuracy_reference.json`) and calculates Olofsson area-adjusted accuracy against `reference_2020.npy` instead of circularly retraining on labels produced from the same spectral bands.
+- **Data Contract & Viewer:** Updated `docs/data_contract.md`, `src/greenplan/api/schemas.py`, and `src/greenplan/viewer.py` to display `"EMPIRICAL (proxy reference)"` vs `"SYNTHETIC DEMO"`, and report exact accuracy reference descriptions in `summary.json`.
+- **Run Inspector (`scripts/check_run.py`):** CLI utility printing structured peer-review audit tables for any run directory.
+- **Assumptions Made:**
+  - Grassland/shrubland mapped to Green Space (1); wetland mapped to Water (3).
+  - Landsat 5 TM reflectance harmonized using Roy et al. (2016) ETM+ to OLI coefficients as standard approximation.
+  - ESA WorldCover 2020 treated as an independent proxy reference layer rather than absolute ground truth.
+- **Tests Added:** `tests/test_empirical.py` (8 unit tests verifying confusion matrix vectorization, transition stats vectorization, Markov matrix vectorization, majority filter vectorization, WorldCover remapping, and data provider contract validation).
+

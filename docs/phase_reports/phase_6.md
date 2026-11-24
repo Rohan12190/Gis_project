@@ -32,3 +32,12 @@
 * **Figure of Merit (FoM):** $\mathbf{38.4\%}$ (Hits: 412, Misses: 298, False Alarms: 362, synthetic benchmark).
 * **Decision Gate Passed:** Model successfully outperforms the no-change null model ($\text{Agreement}_{\text{model}} > \text{Agreement}_{\text{null}}$), establishing statistically verified predictive skill.
 
+## 3. Real-Data Results (Bhopal)
+
+When empirical multi-temporal rasters are supplied from `data/satellite/bhopal/`:
+* **Calibration:** $P_{2000 \to 2010}$ empirical transition probability matrix.
+* **Validation:** 2020 simulated landscape compared directly against the observed empirical 2020 composite.
+* **Validation Metrics:** Pontius Figure of Merit, model agreement, and persistence benchmark (no-change null model) written to `metrics/simulation.json`.
+* **Audit Inspection:** Execute `python scripts/check_run.py` on any completed empirical run to inspect verified FoM, null model comparison, and Pontius $K_{\text{location}}$ / $K_{\text{quantity}}$.
+
+

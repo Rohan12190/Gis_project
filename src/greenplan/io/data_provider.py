@@ -3,7 +3,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -29,6 +29,8 @@ class PipelineInputs:
     pixel_area_ha: float
     crs: str
     data_source: str  # "empirical_satellite_data" or "synthetic_scaffold_testing"
+    reference_2020: Optional[np.ndarray] = None
+    reference_metrics: Optional[Dict] = None
 
 
 def load_real_inputs(data_dir: Path | str) -> PipelineInputs:
@@ -101,6 +103,18 @@ def load_real_inputs(data_dir: Path | str) -> PipelineInputs:
         np.float32
     )
 
+    # Optional proxy reference layers and metrics
+    reference_2020 = None
+    if (p / "reference_2020.npy").exists():
+        reference_2020 = np.load(p / "reference_2020.npy")
+
+    reference_metrics = None
+    for acc_path in [p / "accuracy_reference.json", p / "metrics" / "accuracy_reference.json"]:
+        if acc_path.exists():
+            with open(acc_path, "r", encoding="utf-8") as f:
+                reference_metrics = json.load(f)
+            break
+
     return PipelineInputs(
         lulc_2000=lulc_2000.astype(np.uint8),
         lulc_2010=lulc_2010.astype(np.uint8),
@@ -115,6 +129,8 @@ def load_real_inputs(data_dir: Path | str) -> PipelineInputs:
         pixel_area_ha=pixel_area_ha,
         crs=crs,
         data_source="empirical_satellite_data",
+        reference_2020=reference_2020,
+        reference_metrics=reference_metrics,
     )
 
 

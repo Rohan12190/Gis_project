@@ -121,6 +121,8 @@ class PipelineConfig(BaseModel):
     planning_grid_size_m: float = Field(500.0, gt=0.0)
     rf_num_trees: int = Field(100, ge=10)
     rf_min_split: int = Field(2, ge=1)
+    working_pixel_size_m: Optional[float] = Field(None, gt=0.0)
+    max_pixels: int = Field(2500000, ge=1000)
 
     @field_validator("epochs")
     @classmethod

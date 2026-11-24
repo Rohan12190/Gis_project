@@ -25,9 +25,52 @@ GreenPlan supports two operational execution modes:
 uv sync --extra dev
 
 # Run test suite
-uv run pytest
+uv run python -m pytest tests/ -v
 
 # Code formatting & linting
 uv run ruff check
 ```
+
+## Empirical Workflow (Bhopal)
+
+To run GreenPlan on real Landsat satellite imagery for Bhopal:
+
+1. **Export Composites from Google Earth Engine:**
+   Ensure `EE_PROJECT_ID` is set in your `.env` file.
+   ```bash
+   uv run python scripts/export_gee_composites.py --city bhopal
+   ```
+   This initiates Earth Engine export tasks to Google Drive for:
+   - `composite_2000.tif` (Landsat 5 TM with Roy et al. harmonization)
+   - `composite_2010.tif` (Landsat 5 TM with Roy et al. harmonization)
+   - `composite_2020.tif` (Landsat 8 OLI + Thermal band in Kelvin)
+   - `worldcover_2020.tif` (ESA WorldCover 2020 10m independent reference)
+
+2. **Download from Google Drive:**
+   Download the four generated GeoTIFF files from your Google Drive into:
+   ```text
+   data/raw/bhopal/
+   ```
+
+3. **Build the Empirical Dataset:**
+   Remap WorldCover to GreenPlan taxonomy, train an honest Random Forest against the proxy reference with 4-fold spatial-block CV, and export contract rasters:
+   ```bash
+   uv run python scripts/build_empirical_dataset.py --city bhopal --raw data/raw/bhopal --out data/satellite/bhopal
+   ```
+
+4. **Execute GreenPlan Pipeline:**
+   ```bash
+   uv run python -m greenplan.cli run --city bhopal
+   ```
+
+5. **Audit Run Results:**
+   ```bash
+   uv run python scripts/check_run.py
+   ```
+
+6. **Serve Interactive Dashboard:**
+   ```bash
+   uv run python -m greenplan.cli serve
+   ```
+
 

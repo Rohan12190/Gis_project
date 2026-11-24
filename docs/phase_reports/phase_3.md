@@ -35,3 +35,12 @@
   * Bare land: Producer's Acc $91.3\%$, User's Acc $89.5\%$, F1 $0.904$.
 * **Sanity Audit:** Implausible transitions represented $<0.05\%$ of the total landscape, validating topological consistency.
 
+## 3. Real-Data Results (Bhopal)
+
+When empirical Landsat composites and ESA WorldCover reference are ingested via `scripts/build_empirical_dataset.py`, empirical results are populated dynamically from `metrics/accuracy_reference.json`:
+* **Data Source:** `data/satellite/bhopal/` (USGS Landsat Collection 2 Level-2 Surface Reflectance).
+* **Reference Standard:** ESA WorldCover 2020 (independent proxy reference, remapped via `configs/worldcover_mapping.yaml`).
+* **Evaluation:** 4-fold spatial-block cross-validation evaluated strictly against the independent WorldCover proxy (zero circularity with classifier features).
+* **Audit Inspection:** Execute `python scripts/check_run.py` on any completed empirical run to inspect verified Overall Accuracy, Cohen's Kappa, and Olofsson area-adjusted confidence intervals.
+
+

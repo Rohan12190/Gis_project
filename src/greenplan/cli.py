@@ -131,6 +131,12 @@ def run(
     synthetic: bool = typer.Option(
         False, help="Run in explicit synthetic demo mode for software verification"
     ),
+    max_pixels: Optional[int] = typer.Option(
+        None, help="Maximum allowed pixels before raising a size error"
+    ),
+    working_pixel_size_m: Optional[float] = typer.Option(
+        None, help="Coarse working resolution in meters for downsampling"
+    ),
 ):
     """Execute end-to-end GreenPlan pipeline from Phase 2 through Phase 7."""
     from greenplan.pipeline import run_pipeline
@@ -153,7 +159,12 @@ def run(
     typer.echo(
         f"Starting end-to-end GreenPlan execution for {cfg.study_area.name} (Config: {config})..."
     )
-    run_dir = run_pipeline(config, synthetic_mode=synthetic)
+    run_dir = run_pipeline(
+        config,
+        synthetic_mode=synthetic,
+        max_pixels=max_pixels,
+        working_pixel_size_m=working_pixel_size_m,
+    )
     typer.echo(f"Run completed successfully! Artifacts written to: {run_dir}")
     typer.echo(f"View report at: {run_dir / 'report' / 'dashboard.html'}")
     typer.echo("Or launch server: uv run greenplan serve")

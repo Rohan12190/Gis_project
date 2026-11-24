@@ -119,3 +119,4 @@ class RunSummary(BaseModel):
     builtup_pct_recent: Optional[float] = None
     water_pct: Optional[float] = None
     data_source: Optional[str] = "empirical_satellite"
+    accuracy_reference: Optional[str] = None

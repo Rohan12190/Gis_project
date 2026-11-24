@@ -21,9 +21,8 @@ def compute_transition_stats(
     t1_valid = map_t1[valid]
     t2_valid = map_t2[valid]
 
-    matrix_counts = np.zeros((num_classes, num_classes), dtype=np.int64)
-    for i, j in zip(t1_valid, t2_valid):
-        matrix_counts[i, j] += 1
+    flat_idx = t1_valid * num_classes + t2_valid
+    matrix_counts = np.bincount(flat_idx, minlength=num_classes**2).reshape((num_classes, num_classes))
 
     t1_totals = np.sum(matrix_counts, axis=1)
     t2_totals = np.sum(matrix_counts, axis=0)

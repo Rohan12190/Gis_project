@@ -8,12 +8,22 @@ Each regional study area must be located under `data/satellite/{city_slug}/` (e.
 
 ```text
 data/satellite/{city_slug}/
-├── lulc_2000.npy       # Ground truth / classified reference LULC raster for epoch 2000
-├── lulc_2010.npy       # Ground truth / classified reference LULC raster for epoch 2010
-├── lulc_2020.npy       # Ground truth / classified reference LULC raster for epoch 2020
-├── bands_2020.npz      # Surface reflectance & thermal band arrays for epoch 2020
-└── meta.json           # Spatial reference, spatial resolution, and bounding coordinates
+├── lulc_2000.npy               # Classified LULC raster for epoch 2000 (uint8)
+├── lulc_2010.npy               # Classified LULC raster for epoch 2010 (uint8)
+├── lulc_2020.npy               # Classified LULC raster for epoch 2020 (uint8)
+├── reference_2020.npy          # (Optional) Remapped independent reference layer (e.g. ESA WorldCover) (int8)
+├── accuracy_reference.json     # (Optional) Non-circular CV accuracy metrics against proxy reference
+├── bands_2020.npz              # Surface reflectance & thermal band arrays for epoch 2020
+├── meta.json                   # Spatial reference, spatial resolution, and bounding coordinates
+└── quicklook.png               # 3-panel visual overview of 2000-2020 LULC transitions
 ```
+
+## 2. Design Decision: Independent Reference Layer (Non-Circularity)
+
+To prevent circular evaluation (training and validating a classifier on features derived from the exact same labels):
+1. **Proxy Reference**: We ingest the independent **ESA WorldCover 2020** 10-meter global product (`ESA/WorldCover/v100`), remapped to GreenPlan's 5-class taxonomy (`configs/worldcover_mapping.yaml`).
+2. **Honest Accuracy Reporting**: Random Forest cross-validation is evaluated strictly against the independent WorldCover proxy reference with 4-fold spatial-block CV.
+3. **Labels**: Accuracy metrics and the dashboard state `"reference": "ESA WorldCover 2020 (proxy reference)"`, never claiming ground truth.
 
 ## 2. Array Specifications
 

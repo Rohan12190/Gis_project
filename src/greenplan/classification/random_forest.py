@@ -57,6 +57,7 @@ def train_and_evaluate_rf(
     n_estimators: int = 100,
     min_samples_split: int = 2,
     num_classes: int = 5,
+    max_train_samples: int = 50000,
     seed: int = 42,
 ) -> Dict:
     """Train Random Forest classifier with true spatial block cross-validation.
@@ -69,10 +70,31 @@ def train_and_evaluate_rf(
         n_estimators: Number of trees.
         min_samples_split: Minimum number of samples required to split an internal node.
         num_classes: Fixed number of classes in taxonomy (default 5, prevents absent-class failure).
+        max_train_samples: Maximum number of samples to use for CV and final training (stratified subsample).
         seed: Random seed.
     """
+    n_total = len(labels)
+    if n_total > max_train_samples:
+        rng = np.random.default_rng(seed)
+        # Stratified subsampling across present classes
+        subsample_idx = []
+        unique_cls, counts = np.unique(labels, return_counts=True)
+        # Target per class proportional to representation or capped
+        target_per_class = max_train_samples // len(unique_cls)
+        for cls in unique_cls:
+            cls_indices = np.flatnonzero(labels == cls)
+            n_take = min(len(cls_indices), target_per_class)
+            subsample_idx.extend(rng.choice(cls_indices, size=n_take, replace=False))
+        subsample_idx = np.array(subsample_idx)
+        rng.shuffle(subsample_idx)
+        features_sub = features[subsample_idx]
+        labels_sub = labels[subsample_idx]
+        coords_sub = coords[subsample_idx]
+    else:
+        features_sub, labels_sub, coords_sub = features, labels, coords
+
     # 4-Fold Spatial Cross-Validation
-    folds = spatial_block_kfold(coords, n_folds=4, seed=seed)
+    folds = spatial_block_kfold(coords_sub, n_folds=4, seed=seed)
     fold_oa = []
     fold_kappa = []
     total_cm = np.zeros((num_classes, num_classes), dtype=np.int64)
@@ -87,17 +109,17 @@ def train_and_evaluate_rf(
             random_state=seed,
             n_jobs=-1,
         )
-        rf_fold.fit(features[train_idx], labels[train_idx])
-        preds = rf_fold.predict(features[val_idx])
+        rf_fold.fit(features_sub[train_idx], labels_sub[train_idx])
+        preds = rf_fold.predict(features_sub[val_idx])
 
-        cm_fold = compute_confusion_matrix(labels[val_idx], preds, num_classes=num_classes)
+        cm_fold = compute_confusion_matrix(labels_sub[val_idx], preds, num_classes=num_classes)
         total_cm += cm_fold
 
         res = evaluate_classification(cm_fold)
         fold_oa.append(res["overall_accuracy"])
         fold_kappa.append(res["kappa"])
 
-    # Final model fit on all data for spatial prediction
+    # Final model fit on subsampled data for spatial prediction
     final_rf = RandomForestClassifier(
         n_estimators=n_estimators,
         min_samples_split=min_samples_split,
@@ -105,7 +127,7 @@ def train_and_evaluate_rf(
         random_state=seed,
         n_jobs=-1,
     )
-    final_rf.fit(features, labels)
+    final_rf.fit(features_sub, labels_sub)
 
     acc_report = evaluate_classification(total_cm)
     acc_report["cv_overall_accuracy_mean"] = float(np.mean(fold_oa)) if fold_oa else 0.0
@@ -120,20 +142,36 @@ def train_and_evaluate_rf(
         "confusion_matrix": total_cm,
         "metrics": acc_report,
         "feature_importances": importances,
-        "n_samples": len(labels),
+        "n_samples": len(labels_sub),
         "num_classes": num_classes,
     }
 
 
-def apply_majority_filter(class_map: np.ndarray, window_size: int = 3) -> np.ndarray:
-    """Apply modal (majority) filter to remove isolated salt-and-pepper pixel noise."""
-    from scipy.ndimage import generic_filter
+def predict_raster_chunks(model, features: np.ndarray, chunk_size: int = 100000) -> np.ndarray:
+    """Predict class labels for a large (N, p) feature array in chunks to avoid memory spikes."""
+    n_samples = features.shape[0]
+    preds = np.empty(n_samples, dtype=np.uint8)
+    for start in range(0, n_samples, chunk_size):
+        end = min(start + chunk_size, n_samples)
+        preds[start:end] = model.predict(features[start:end])
+    return preds
 
-    def _mode_func(values):
-        vals, counts = np.unique(values, return_counts=True)
-        return vals[np.argmax(counts)]
 
-    filtered = generic_filter(
-        class_map.astype(np.int32), _mode_func, size=window_size, mode="reflect"
-    )
+def apply_majority_filter(
+    class_map: np.ndarray, window_size: int = 3, num_classes: int = 5
+) -> np.ndarray:
+    """Apply modal (majority) filter to remove isolated salt-and-pepper pixel noise.
+
+    Uses fast vectorized uniform filters across class layers instead of slow generic Python loops.
+    """
+    from scipy.ndimage import uniform_filter
+
+    k = max(num_classes, int(np.max(class_map)) + 1)
+    counts = np.zeros((k, *class_map.shape), dtype=np.float32)
+
+    for c in range(k):
+        c_mask = (class_map == c).astype(np.float32)
+        counts[c] = uniform_filter(c_mask, size=window_size, mode="reflect")
+
+    filtered = np.argmax(counts, axis=0)
     return filtered.astype(class_map.dtype)

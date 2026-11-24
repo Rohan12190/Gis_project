@@ -25,10 +25,8 @@ def compute_transition_matrix(
         & (final_map >= 0)
         & (final_map < num_classes)
     )
-    counts = np.zeros((num_classes, num_classes), dtype=np.int64)
-
-    for i, f in zip(initial_map[valid], final_map[valid]):
-        counts[i, f] += 1
+    flat_idx = initial_map[valid] * num_classes + final_map[valid]
+    counts = np.bincount(flat_idx, minlength=num_classes**2).reshape((num_classes, num_classes))
 
     prob_matrix = np.zeros((num_classes, num_classes), dtype=np.float64)
     row_sums = np.sum(counts, axis=1)

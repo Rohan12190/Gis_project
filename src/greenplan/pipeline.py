@@ -57,6 +57,8 @@ def run_pipeline(
     config_path: Path | str,
     run_id: Optional[str] = None,
     synthetic_mode: bool = False,
+    max_pixels: Optional[int] = None,
+    working_pixel_size_m: Optional[float] = None,
 ) -> Path:
     """Execute end-to-end GreenPlan scientific GIS pipeline.
 
@@ -66,8 +68,14 @@ def run_pipeline(
         synthetic_mode: When True, runs synthetic landscape simulation for unit testing.
                         When False, uses verified regional satellite data if available,
                         or falls back to synthetic calibration with an explicit logged banner.
+        max_pixels: Safety limit for max raster cells (overrides config).
+        working_pixel_size_m: Coarse aggregation resolution in meters (overrides config).
     """
     cfg = load_pipeline_config(config_path)
+    if max_pixels is not None:
+        cfg.max_pixels = max_pixels
+    if working_pixel_size_m is not None:
+        cfg.working_pixel_size_m = working_pixel_size_m
 
     if run_id is None:
         run_id = f"run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
@@ -110,6 +118,37 @@ def run_pipeline(
 
     h, w = lulc_2020.shape
     n_pixels = h * w
+    if n_pixels > cfg.max_pixels:
+        raise ValueError(
+            f"Raster size ({h}x{w} = {n_pixels:,} pixels) exceeds configured max_pixels ({cfg.max_pixels:,}). "
+            f"Increase max_pixels in config or specify working_pixel_size_m for coarse aggregation."
+        )
+
+    # Optional downsampling if working_pixel_size_m is configured
+    if cfg.working_pixel_size_m and cfg.working_pixel_size_m > pixel_size_m:
+        factor = int(round(cfg.working_pixel_size_m / pixel_size_m))
+        if factor > 1:
+            from scipy.ndimage import zoom
+
+            new_h, new_w = h // factor, w // factor
+            c_h, c_w = new_h * factor, new_w * factor
+            lulc_2000 = zoom(lulc_2000[:c_h, :c_w], 1.0 / factor, order=0)
+            lulc_2010 = zoom(lulc_2010[:c_h, :c_w], 1.0 / factor, order=0)
+            lulc_2020 = zoom(lulc_2020[:c_h, :c_w], 1.0 / factor, order=0)
+            if inputs.reference_2020 is not None:
+                inputs.reference_2020 = zoom(inputs.reference_2020[:c_h, :c_w], 1.0 / factor, order=0)
+            bands_2020 = {b: zoom(arr[:c_h, :c_w], 1.0 / factor, order=1) for b, arr in bands_2020.items()}
+            lst_20 = zoom(lst_20[:c_h, :c_w], 1.0 / factor, order=1)
+            water_mask = (lulc_2020 == 3)
+            valid_mask = ~water_mask & ~np.isnan(lst_20)
+            pixel_size_m = pixel_size_m * factor
+            pixel_area_ha = (pixel_size_m * pixel_size_m) / 10000.0
+            h, w = lulc_2020.shape
+            n_pixels = h * w
+            coords = np.column_stack([np.repeat(np.arange(h), w), np.tile(np.arange(w), h)]).astype(
+                np.float32
+            )
+
     total_area_ha = n_pixels * pixel_area_ha
 
     nir_20 = bands_2020["nir"]
@@ -123,44 +162,77 @@ def run_pipeline(
     mndwi_20 = compute_mndwi(green_20, swir_20)
     ebbi_20 = compute_ebbi(swir_20, nir_20, tir_20)
 
-    # 4. Phase 3: Train and evaluate Random Forest with 4-Fold Spatial Cross-Validation
-    features = np.column_stack(
-        [
-            nir_20.ravel(),
-            red_20.ravel(),
-            swir_20.ravel(),
-            green_20.ravel(),
-            ndvi_20.ravel(),
-            ndbi_20.ravel(),
-            mndwi_20.ravel(),
-            ebbi_20.ravel(),
-        ]
-    )
-    feature_names = ["NIR", "Red", "SWIR1", "Green", "NDVI", "NDBI", "MNDWI", "EBBI"]
-    labels = lulc_2020.ravel()
-
-    rf_result = train_and_evaluate_rf(
-        features,
-        labels,
-        coords,
-        feature_names,
-        n_estimators=cfg.rf_num_trees,
-        min_samples_split=cfg.rf_min_split,
-        num_classes=5,
-        seed=cfg.random_seed,
+    # 4. Phase 3: Classification Accuracy Assessment
+    # In empirical mode, we evaluate against an independent proxy reference (ESA WorldCover 2020)
+    # rather than circularly retraining on labels produced from the same spectral bands.
+    is_empirical = inputs.data_source == "empirical_satellite_data"
+    accuracy_ref_desc = (
+        "ESA WorldCover 2020 (proxy reference)"
+        if is_empirical
+        else "Synthetic Ground Truth (Scaffold Benchmark)"
     )
 
-    # Compute predicted map for full raster
-    predicted_rf_map = rf_result["model"].predict(features).reshape((h, w))
+    if is_empirical and inputs.reference_metrics is not None:
+        rf_result = inputs.reference_metrics
+        predicted_rf_map = lulc_2020.copy()
+    else:
+        features = np.column_stack(
+            [
+                nir_20.ravel(),
+                red_20.ravel(),
+                swir_20.ravel(),
+                green_20.ravel(),
+                ndvi_20.ravel(),
+                ndbi_20.ravel(),
+                mndwi_20.ravel(),
+                ebbi_20.ravel(),
+            ]
+        )
+        feature_names = ["NIR", "Red", "SWIR1", "Green", "NDVI", "NDBI", "MNDWI", "EBBI"]
+        labels = lulc_2020.ravel()
+
+        rf_result = train_and_evaluate_rf(
+            features,
+            labels,
+            coords,
+            feature_names,
+            n_estimators=cfg.rf_num_trees,
+            min_samples_split=cfg.rf_min_split,
+            num_classes=5,
+            seed=cfg.random_seed,
+        )
+        predicted_rf_map = rf_result["model"].predict(features).reshape((h, w))
 
     # Area-adjusted accuracy (Olofsson et al. 2014):
     # Draw stratified random sample of reference points where strata are predicted MAP classes
-    sampled_indices = sample_reference_points(
-        predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
-    )
-    sample_cm = compute_confusion_matrix(
-        labels[sampled_indices], predicted_rf_map.ravel()[sampled_indices], num_classes=5
-    )
+    if is_empirical and inputs.reference_2020 is not None:
+        ref_flat = inputs.reference_2020.ravel()
+        valid_ref_mask = ref_flat >= 0
+        pred_flat = predicted_rf_map.ravel()
+        # Stratified sampling over valid reference area
+        sampled_indices = sample_reference_points(
+            predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
+        )
+        # Filter to valid reference
+        sampled_valid = [idx for idx in sampled_indices if valid_ref_mask[idx]]
+        if len(sampled_valid) < 20:
+            sampled_valid = np.flatnonzero(valid_ref_mask)
+            if len(sampled_valid) > 250:
+                sampled_valid = rng.choice(sampled_valid, size=250, replace=False).tolist()
+        sample_cm = compute_confusion_matrix(
+            ref_flat[sampled_valid], pred_flat[sampled_valid], num_classes=5
+        )
+        sampled_indices = sampled_valid
+    else:
+        sampled_indices = sample_reference_points(
+            predicted_rf_map, n_per_class=50, seed=cfg.random_seed, min_samples=20
+        )
+        sample_cm = compute_confusion_matrix(
+            lulc_2020.ravel()[sampled_indices],
+            predicted_rf_map.ravel()[sampled_indices],
+            num_classes=5,
+        )
+
     map_stratum_weights = np.bincount(predicted_rf_map.ravel(), minlength=5)[:5] / n_pixels
     area_adj_records = compute_area_adjusted_accuracy(
         sample_cm, map_stratum_weights, total_area_ha
@@ -168,6 +240,7 @@ def run_pipeline(
     df_area_adj = pd.DataFrame(area_adj_records)
     df_area_adj["class_name"] = [c.name for c in cfg.class_scheme[: len(df_area_adj)]]
     df_area_adj["data_source"] = data_source_label
+    df_area_adj["reference"] = accuracy_ref_desc
     df_area_adj.to_csv(run_dir / "tables" / "area_adjusted_accuracy.csv", index=False)
 
     # 5. Phase 3: Change Analysis (2000 -> 2010 -> 2020)
@@ -577,6 +650,8 @@ def run_pipeline(
     df_trans.to_csv(run_dir / "tables" / "transitions_2010_2020.csv")
 
     accuracy_output = {
+        "data_source": data_source_label,
+        "reference": accuracy_ref_desc,
         "pixel_cv": rf_result["metrics"],
         "area_adjusted_sample": {
             "sample_size": int(len(sampled_indices)),
@@ -619,6 +694,7 @@ def run_pipeline(
         builtup_pct_recent=round(float(np.sum(lulc_2020 == 0) / n_pixels * 100.0), 1),
         water_pct=round(float(np.sum(water_mask) / n_pixels * 100.0), 1),
         data_source=data_source_label,
+        accuracy_reference=accuracy_ref_desc,
     )
     with open(run_dir / "summary.json", "w", encoding="utf-8") as f:
         f.write(summary.model_dump_json(indent=2))
