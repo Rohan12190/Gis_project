@@ -1,9 +1,11 @@
-"""Benchmark script comparing offline snapshot load performance, verification, and memory footprint."""
+"""Benchmark script comparing offline snapshot load performance, verification, and real raster memory footprint."""
 
 import sys
 import time
 import tracemalloc
 from pathlib import Path
+
+import numpy as np
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -21,9 +23,9 @@ def get_dir_size(path: Path) -> float:
 
 
 def benchmark_snapshots():
-    print("=" * 75)
+    print("=" * 80)
     print(" GREENPLAN GIS REAL-DATA BENCHMARK (OFFLINE SNAPSHOTS)")
-    print("=" * 75)
+    print("=" * 80)
 
     snapshots = list_snapshots()
     if not snapshots:
@@ -32,9 +34,9 @@ def benchmark_snapshots():
 
     snap_ids = [s["snapshot_id"] for s in snapshots]
     print(f"Discovered {len(snap_ids)} snapshot(s): {', '.join(snap_ids)}")
-    print("-" * 75)
-    print(f"{'Snapshot':<12} | {'Disk Size':<10} | {'SHA-256 Check':<14} | {'Load Time':<11} | {'Peak RAM':<10}")
-    print("-" * 75)
+    print("-" * 80)
+    print(f"{'Snapshot':<12} | {'Disk Size':<10} | {'SHA-256 Check':<15} | {'Load All Rasters':<18} | {'Peak RAM':<10}")
+    print("-" * 80)
 
     verifications = verify_snapshots()
 
@@ -49,24 +51,30 @@ def benchmark_snapshots():
         verify_time_ms = (time.perf_counter() - t0) * 1000
 
         if not is_valid:
-            print(f"{snap_id:<12} | {disk_mb:>7.2f} MB | FAILED CHECK   | N/A         | N/A")
+            print(f"{snap_id:<12} | {disk_mb:>7.2f} MB | FAILED CHECK    | N/A                | N/A")
             continue
 
-        # 2. Load time and peak memory
+        # 2. Honest load time and peak memory of all multi-epoch rasters + inputs
         tracemalloc.start()
         t1 = time.perf_counter()
         load_snapshot(snap_id)
+        # Load all compressed multi-epoch rasters from inputs.npz into RAM
+        loaded_arrays = {}
+        with np.load(snap_dir / "inputs.npz") as npz:
+            for k in npz.files:
+                loaded_arrays[k] = npz[k]
         load_time_ms = (time.perf_counter() - t1) * 1000
-        current_mem, peak_mem = tracemalloc.get_traced_memory()
+        _, peak_mem = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
         peak_mb = peak_mem / (1024 * 1024)
         ver_str = f"PASSED ({verify_time_ms:.0f}ms)"
-        print(f"{snap_id:<12} | {disk_mb:>7.2f} MB | {ver_str:<14} | {load_time_ms:>8.2f} ms | {peak_mb:>7.2f} MB")
+        load_str = f"{load_time_ms:.1f} ms ({len(loaded_arrays)} arr)"
+        print(f"{snap_id:<12} | {disk_mb:>7.2f} MB | {ver_str:<15} | {load_str:<18} | {peak_mb:>7.2f} MB")
 
-    print("-" * 75)
-    print("Benchmark complete. All snapshots loaded and verified cryptographically.")
-    print("=" * 75)
+    print("-" * 80)
+    print("Benchmark complete. All multi-epoch rasters loaded and verified cryptographically.")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

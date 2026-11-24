@@ -148,8 +148,10 @@ class PipelineConfig(BaseModel):
     study_area: AOIConfig
     projected_crs: str = Field("EPSG:32643", pattern=r"^EPSG:\d+$")
     random_seed: int = Field(42, ge=0)
-    epochs: List[int] = Field(default_factory=lambda: [2000, 2010, 2020])
-    projection_years: List[int] = Field(default_factory=lambda: [2030, 2040])
+    epochs: List[int] = Field(
+        default_factory=lambda: [2000, 2004, 2008, 2012, 2016, 2020, 2025]
+    )
+    projection_years: List[int] = Field(default_factory=lambda: [2035, 2045])
     class_scheme: List[ClassSchemeItem]
     composite_window: WindowConfig
     lst_window: LSTWindowConfig

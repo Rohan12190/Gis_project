@@ -20,27 +20,6 @@ from greenplan.io.data_provider import PipelineInputs
 logger = logging.getLogger(__name__)
 
 
-def align_raster_shape(arr: np.ndarray, target_shape: Tuple[int, int], fill_value: Any = 0) -> np.ndarray:
-    """Ensure array matches target (H, W) exactly, padding or trimming 1-pixel rounding differences."""
-    if arr.shape[:2] == target_shape:
-        return arr
-    th, tw = target_shape
-    if arr.ndim == 2:
-        target_dtype = arr.dtype
-        if fill_value < 0 and np.issubdtype(arr.dtype, np.unsignedinteger):
-            target_dtype = np.int16
-        out = np.full((th, tw), fill_value, dtype=target_dtype)
-        h, w = min(arr.shape[0], th), min(arr.shape[1], tw)
-        out[:h, :w] = arr[:h, :w]
-        return out
-    elif arr.ndim == 3:
-        out = np.full((th, tw, arr.shape[2]), fill_value, dtype=arr.dtype)
-        h, w = min(arr.shape[0], th), min(arr.shape[1], tw)
-        out[:h, :w, :] = arr[:h, :w, :]
-        return out
-    return arr
-
-
 def compute_utm_zone_and_crs(lon: float, lat: float) -> Tuple[int, str]:
     """Determine EPSG UTM projection code and zone from WGS84 coordinates."""
     zone = int((lon + 180.0) / 6.0) + 1
@@ -205,6 +184,21 @@ def build_live_inputs(
         lat, lon, radius_km, utm_crs
     )
 
+    # Fixed UTM planar extraction rectangle and discrete affine grid transform
+    aoi_utm = ee.Geometry.Rectangle(
+        [float(min_x), float(min_y), float(max_x), float(max_y)],
+        proj=utm_crs,
+        geodesic=False,
+    )
+    # 30m resolution grid aligned to (min_x, max_y)
+    crs_transform = [30.0, 0.0, float(min_x), 0.0, -30.0, float(max_y)]
+
+    def _pull_aligned_raster(img: ee.Image) -> np.ndarray:
+        """Reproject image onto the fixed UTM grid to prevent shape discrepancies or edge padding."""
+        reprojected = img.reproject(crs=utm_crs, crsTransform=crs_transform)
+        arr = geemap.ee_to_numpy(reprojected, region=aoi_utm, crs=utm_crs)
+        return arr.squeeze()
+
     place_name = name or reverse_geocode_place(lat, lon)
 
     # 1. Load or train regional GEE classifier
@@ -244,13 +238,16 @@ def build_live_inputs(
 
         comp, _ = build_composite(aoi_wgs84, year=yr, min_images=2)
         classified_img = comp.select(FEATURE_NAMES).classify(gee_classifier).toByte()
-        class_arr = geemap.ee_to_numpy(classified_img, region=aoi_wgs84, scale=30)
-        epoch_rasters[yr] = class_arr.squeeze().astype(np.uint8)
+        epoch_rasters[yr] = _pull_aligned_raster(classified_img).astype(np.uint8)
 
-    # Ensure all epoch rasters share identical dimensions
+    # Validate that all epoch rasters share the exact discrete UTM pixel grid dimensions
     target_shape = epoch_rasters[target_epochs[-1]].shape
     for yr in target_epochs:
-        epoch_rasters[yr] = align_raster_shape(epoch_rasters[yr], target_shape, fill_value=4)
+        if epoch_rasters[yr].shape != target_shape:
+            raise ValueError(
+                f"Epoch {yr} raster shape mismatch: expected {target_shape}, "
+                f"got {epoch_rasters[yr].shape}. Discrete grid reprojection failed."
+            )
 
     # Apply temporal consistency filter
     epoch_rasters = apply_builtup_persistence_filter(epoch_rasters)
@@ -260,8 +257,11 @@ def build_live_inputs(
         progress("Extracting 2020 spectral bands & thermal radiance...", 0.70)
     comp_2020, _ = build_composite(aoi_wgs84, year=2020, min_images=2)
     bands_img = comp_2020.select(["nir", "red", "swir1", "green", "tir"])
-    bands_arr = geemap.ee_to_numpy(bands_img, region=aoi_wgs84, scale=30)
-    bands_arr = align_raster_shape(bands_arr, target_shape, fill_value=0.0)
+    bands_arr = _pull_aligned_raster(bands_img)
+    if bands_arr.shape[:2] != target_shape:
+        raise ValueError(
+            f"2020 spectral bands shape mismatch: expected {target_shape}, got {bands_arr.shape[:2]}"
+        )
 
     bands_2020 = {
         "nir": bands_arr[:, :, 0].astype(np.float32),
@@ -278,14 +278,16 @@ def build_live_inputs(
     latest_yr = target_epochs[-1]
 
     comp_first, _ = build_composite(aoi_wgs84, year=first_yr, min_images=2)
-    arr_first = geemap.ee_to_numpy(comp_first.select(["ndvi", "tir"]), region=aoi_wgs84, scale=30)
-    arr_first = align_raster_shape(arr_first, target_shape, fill_value=0.0)
+    arr_first = _pull_aligned_raster(comp_first.select(["ndvi", "tir"]))
+    if arr_first.shape[:2] != target_shape:
+        raise ValueError(f"Epoch {first_yr} bands shape mismatch: expected {target_shape}, got {arr_first.shape[:2]}")
     ndvi_first = arr_first[:, :, 0].astype(np.float32)
     thermal_first = arr_first[:, :, 1].astype(np.float32)
 
     comp_latest, _ = build_composite(aoi_wgs84, year=latest_yr, min_images=2)
-    arr_latest = geemap.ee_to_numpy(comp_latest.select(["ndvi", "tir"]), region=aoi_wgs84, scale=30)
-    arr_latest = align_raster_shape(arr_latest, target_shape, fill_value=0.0)
+    arr_latest = _pull_aligned_raster(comp_latest.select(["ndvi", "tir"]))
+    if arr_latest.shape[:2] != target_shape:
+        raise ValueError(f"Epoch {latest_yr} bands shape mismatch: expected {target_shape}, got {arr_latest.shape[:2]}")
     ndvi_latest = arr_latest[:, :, 0].astype(np.float32)
     thermal_latest = arr_latest[:, :, 1].astype(np.float32)
 
@@ -300,8 +302,9 @@ def build_live_inputs(
         .select("Map")
     )
     remapped_wc = wc_img.remap(list(remapping.keys()), list(remapping.values()), defaultValue=-1)
-    ref_2020 = geemap.ee_to_numpy(remapped_wc.toByte(), region=aoi_wgs84, scale=30).squeeze()
-    ref_2020 = align_raster_shape(ref_2020, target_shape, fill_value=-1)
+    ref_2020 = _pull_aligned_raster(remapped_wc.toByte())
+    if ref_2020.shape != target_shape:
+        raise ValueError(f"WorldCover reference shape mismatch: expected {target_shape}, got {ref_2020.shape}")
 
     # 6. Annual greenness series via server-side reduceRegion
     if progress:

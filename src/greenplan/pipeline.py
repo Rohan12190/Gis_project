@@ -278,9 +278,28 @@ def run_analysis(
         val_target_year = 2020
         idx_20 = checkpoints.index(2020)
         prev_epoch = checkpoints[idx_20 - 1]
-        _, p_val = compute_transition_matrix(
-            epoch_rasters[checkpoints[0]], epoch_rasters[prev_epoch], num_classes=5
-        )
+
+        # Estimate adjacent single-step transition matrices for all intervals prior to target,
+        # then average them so the Markov transition timescale matches the forecast step.
+        prior_p_matrices = []
+        for i in range(idx_20 - 1):
+            ep_start = checkpoints[i]
+            ep_end = checkpoints[i + 1]
+            _, p_step = compute_transition_matrix(
+                epoch_rasters[ep_start], epoch_rasters[ep_end], num_classes=5
+            )
+            prior_p_matrices.append(p_step)
+
+        if prior_p_matrices:
+            p_val = np.mean(prior_p_matrices, axis=0)
+            row_sums = p_val.sum(axis=1, keepdims=True)
+            row_sums[row_sums == 0] = 1.0
+            p_val = p_val / row_sums
+        else:
+            _, p_val = compute_transition_matrix(
+                epoch_rasters[checkpoints[0]], epoch_rasters[prev_epoch], num_classes=5
+            )
+
         target_val_counts = project_target_areas(epoch_rasters[prev_epoch], p_val, num_classes=5)
 
         drivers_val, layers_val = extract_spatial_drivers(
@@ -316,13 +335,18 @@ def run_analysis(
         fom_metrics = compute_figure_of_merit(
             epoch_rasters[prev_epoch], epoch_rasters[val_target_year], sim_val, target_class=0
         )
+        fom_metrics["status"] = "computed"
+        fom_metrics["validation_target_year"] = val_target_year
+        fom_metrics["baseline_year"] = prev_epoch
         np.save(run_dir / "rasters" / "sim_validation.npy", sim_val)
     else:
         fom_metrics = {
-            "figure_of_merit": 0.28,
-            "beats_null_model": True,
-            "quantity_disagreement": 0.02,
-            "allocation_disagreement": 0.06,
+            "status": "not_available",
+            "reason": "Hindcast validation requires at least 3 checkpoints including a 2020 calibration target.",
+            "figure_of_merit": None,
+            "beats_null_model": None,
+            "quantity_disagreement": None,
+            "allocation_disagreement": None,
         }
 
     with open(run_dir / "metrics" / "simulation_validation.json", "w", encoding="utf-8") as f:
@@ -549,7 +573,7 @@ def run_analysis(
         "thermal_analysis": thermal_results,
         "suitability": {
             "vif": vifs,
-            "auc": suit_metrics.get("auc", 0.85),
+            "auc": suit_metrics.get("auc"),
             "driver_names": driver_names,
         },
         "scenarios": scenarios_summary,
@@ -592,6 +616,11 @@ def run_analysis(
                 )
             )
 
+    cfg_hash_target = Path("configs/region.yaml")
+    if not cfg_hash_target.exists():
+        cfg_hash_target = Path("configs/pipeline.yaml")
+    cfg_hash = calculate_sha256(cfg_hash_target) if cfg_hash_target.exists() else "unhashed"
+
     create_manifest(
         run_dir=run_dir,
         run_id=run_id,
@@ -599,7 +628,7 @@ def run_analysis(
         study_area=place_name,
         projected_crs=inputs.crs,
         bounds=inputs.bounds,
-        config_hash="real-data-gis-manifest",
+        config_hash=cfg_hash,
         artifacts=artifacts,
     )
 
@@ -612,17 +641,11 @@ def run_analysis(
 def run_pipeline(
     config_path: Path | str = "configs/pipeline.yaml",
     run_id: Optional[str] = None,
-    synthetic_mode: bool = False,
     working_pixel_size_m: Optional[float] = None,
     preloaded_inputs: Optional[PipelineInputs] = None,
+    **legacy_kwargs: Any,
 ) -> Path:
-    """Wrapper function maintaining compatibility with legacy call contracts."""
-    if synthetic_mode:
-        raise ValueError(
-            "Synthetic mode has been decommissioned under the real-data GIS mandate. "
-            "Please run with empirical data or use live Earth Engine mode."
-        )
-
+    """Wrapper function maintaining compatibility with programmatic pipeline calls."""
     cfg = load_pipeline_config(config_path)
     if working_pixel_size_m:
         cfg.working_pixel_size_m = working_pixel_size_m
@@ -633,12 +656,11 @@ def run_pipeline(
     run_dir = Path("outputs") / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    city_key = cfg.study_area.name.lower()
-    data_dir = Path("data") / "satellite" / city_key
-
     if preloaded_inputs is not None:
         inputs = preloaded_inputs
     else:
+        area_key = cfg.study_area.name.lower()
+        data_dir = Path("data") / "satellite" / area_key
         if not (data_dir.exists() and (data_dir / "lulc_2020.npy").exists()):
             raise FileNotFoundError(
                 f"Empirical satellite data directory not found or incomplete: '{data_dir}'."

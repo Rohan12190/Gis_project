@@ -8,9 +8,9 @@ import pytest
 from greenplan.classification.change_analysis import compute_transition_stats
 from greenplan.classification.random_forest import apply_majority_filter
 from greenplan.io.data_provider import PipelineInputs, load_real_inputs
+from greenplan.models.train_regional_model import load_worldcover_mapping, remap_worldcover
 from greenplan.simulation.markov import compute_transition_matrix
 from greenplan.validation.metrics import compute_confusion_matrix
-from scripts.build_empirical_dataset import load_worldcover_mapping, remap_worldcover
 
 
 def test_vectorized_confusion_matrix_matches_loop():

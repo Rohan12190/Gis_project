@@ -1,136 +1,10 @@
-# GreenPlan Codebase Refactoring & Defensibility Changelog
-
-## Rebuild Phase 0: Pure Real-Data Migration, Branch Setup & Pure Algorithm Porting
-- **Branch:** `rebuild/real-gis` (backed up pristine state on `backup/main-before-rebuild`).
-- **Deleted Deprecated Paths (git rm):**
-  - `src/greenplan/viewer.py` (legacy template-based monolithic dashboard)
-  - `src/greenplan/gee_presets.json` (hardcoded presets)
-  - `configs/pipeline_indore.yaml`, `configs/pipeline_kothri.yaml`, `configs/pipeline_sehore.yaml` (per-city configs removed; region is now place-agnostic)
-  - `configs/aoi/bhopal.geojson`, `configs/aoi/indore.geojson`, `configs/aoi/kothri.geojson`, `configs/aoi/sehore.geojson` (hardcoded AOIs removed)
-  - `docs/phase_reports/phase_3.md`, `phase_4_5.md`, `phase_6.md`, `phase_7_8_9.md` (synthetic report numbers purged)
-  - `generate_synthetic_inputs()` in `src/greenplan/io/data_provider.py` (purged synthetic landscape simulation)
-- **Pure Algorithm Ported Modules (Verified against Unit Tests):**
-  - `src/greenplan/validation/metrics.py`: Confusion matrix, Olofsson area-adjusted accuracy, stratified reference sampling, Pontius Figure of Merit & Kappa components.
-  - `src/greenplan/simulation/markov.py`: Transition matrix estimation, probability scaling, target area projections.
-  - `src/greenplan/simulation/ca.py`: Exact quota cellular automata allocation.
-  - `src/greenplan/simulation/suitability.py`: Spatial driver extraction without target leakage, VIF collinearity check, spatial-block CV suitability modeling.
-  - `src/greenplan/planning/decision_matrix.py`: Zero-inflation-safe terciles, loss risk computation, robust thermal stress, structured recommendation rule matching.
-  - `src/greenplan/config.py`: Pydantic models with `RegionConfig` support.
-  - `configs/recommendations.yaml`: Structured policy action rules.
-  - `configs/worldcover_mapping.yaml`: ESA WorldCover 2020 remapping table.
-  - `src/greenplan/thermal/regression.py`: OLS regression, Moran's I spatial autocorrelation, Getis-Ord Gi* hotspot statistics.
-- **Added Files:**
-  - `configs/region.yaml`: Madhya Pradesh region configuration (`FAO/GAUL/2015/level1`), default checkpoints `[2000, 2004, 2008, 2012, 2016, 2020, 2025]`.
-- **Files Modified:** `src/greenplan/simulation/suitability.py`, `src/greenplan/pipeline.py`
-- **Changes:**
-  - Implemented `extract_spatial_drivers()`: training drivers derive strictly from `lulc_2000 == 0` (pre-transition state), eliminating target leakage where cells already built in 2010 had distance 0.
-  - Recomputed proximity drivers dynamically for hindcasting (`lulc_2010`) and forward projection (`lulc_2020`).
-  - Added spatial-block cross-validation ROC-AUC evaluation via `spatial_block_kfold(coords)` and persisted metrics to `metrics/suitability_model.json`.
-  - Added VIF collinearity check on training drivers.
-- **Tests Added:** `tests/test_suitability.py` (`test_training_driver_no_target_leakage`, `test_suitability_model_evaluates_auc`).
-
-## Task 2: Loss Risk Overwrite Bug Fix & Continuous Blending
-- **Files Modified:** `src/greenplan/planning/decision_matrix.py`, `src/greenplan/pipeline.py`
-- **Changes:**
-  - Replaced magic constants with named module-level constants (`BASE_RISK_GREEN_CONVERTED = 0.90`, etc.).
-  - Implemented `compute_loss_risk()` using `np.maximum()` so lost + high-suitability cells are never overwritten by lower scores.
-  - Formulated continuous risk surface combining baseline conversion indicators with continuous urban suitability.
-  - Implemented `compute_thermal_stress()` using robust percentiles (2nd to 98th) over `valid_mask`.
-- **Tests Added:** `tests/test_decision_matrix.py` (`test_loss_risk_lost_and_high_suitability_gets_max_score`, `test_thermal_stress_robust_percentiles`).
-
-## Task 3: Data Provider Refactoring, Provenance Labels & Report Honesty
-- **Files Modified/Created:**
-  - `src/greenplan/io/data_provider.py` (`PipelineInputs`, `load_real_inputs`, `generate_synthetic_inputs`).
-  - `docs/data_contract.md`: Standard contract for empirical satellite rasters.
-  - `scripts/export_gee_composites.py`: Script to export empirical Landsat composites from Google Earth Engine.
-  - `src/greenplan/pipeline.py`: Refactored to load inputs from `data_provider`; raises explicit `FileNotFoundError` if `--synthetic` is omitted and empirical data is absent; replaced hardcoded 0.09 ha with dynamic `pixel_area_ha`; added `data_source` column to all output CSVs.
-  - `src/greenplan/viewer.py`: Added prominent `SYNTHETIC DEMO - NOT EMPIRICAL` warning banner when viewing synthetic runs.
-  - `docs/phase_reports/phase_3.md`, `phase_4_5.md`, `phase_6.md`, `README.md`: Relabeled validation metrics as synthetic pipeline verification benchmarks and documented empirical data requirements.
-- **Tests Added:** `tests/test_data_provider.py` (`test_load_real_inputs_nonexistent_dir`, `test_load_real_inputs_partial_contract`, `test_load_real_inputs_complete_contract`, `test_generate_synthetic_inputs`, `test_pipeline_raises_on_missing_real_data`).
-
-## Task 4: Stratified Sampling for Olofsson Area Adjustment & Honest CIs
-- **Files Modified:** `src/greenplan/validation/metrics.py`, `src/greenplan/pipeline.py`
-- **Changes:**
-  - Implemented `sample_reference_points(map_arr, n_per_class, seed, min_samples)` to draw stratified random samples where strata are predicted map classes, with minimum sample guarantees for rare classes.
-  - Built sample confusion matrix from stratified reference sample instead of full-raster pixel matrix, ensuring realistic and defensible confidence intervals per Olofsson et al. (2014).
-  - Updated `pipeline.py` to preserve spatial-block CV for classifier performance (`pixel_cv`) while using the stratified sample for area adjustment (`area_adjusted_sample`), writing both to `metrics/accuracy.json`.
-- **Tests Added:** `tests/test_metrics.py` (`test_sample_reference_points`, `test_olofsson_hand_computed_ground_truth_and_ci_comparison`).
-
-## Task 5: Structured Recommendations Schema & Elimination of eval()
-- **Files Modified:** `configs/recommendations.yaml`, `src/greenplan/config.py`, `src/greenplan/planning/decision_matrix.py`, `src/greenplan/viewer.py`
-- **Changes:**
-  - Migrated `configs/recommendations.yaml` from raw string conditions to structured dictionary triggers: `{risk: [...], heat: [...], min_green_pct: ...}`.
-  - Added `TriggerConfig` Pydantic model in `config.py` validating valid levels (`low`, `medium`, `high`) and percentage bounds.
-  - Replaced `eval()` and silent exception catching in `decision_matrix.py` with `match_recommendation_trigger()` and strict validation in `load_sourced_recommendations()`.
-  - Wired dynamic `planning_grid_size_m / pixel_size_m` into planning unit evaluation.
-- **Tests Added:** `tests/test_decision_matrix.py` (`test_match_recommendation_trigger`, `test_load_sourced_recommendations_valid_and_malformed`, `test_no_eval_or_exec_in_codebase`).
-
-## Task 6: CA-Markov Target Allocation, Multi-Seed Validation & Pontius Alignment
-- **Files Modified:** `src/greenplan/simulation/ca.py`, `src/greenplan/simulation/markov.py`, `src/greenplan/validation/metrics.py`, `src/greenplan/pipeline.py`
-- **Changes:**
-  - Added target check in `allocate_cellular_automata()` warning if discrepancy exceeds 1% of class area.
-  - Aligned `compute_figure_of_merit()` keys and docstrings with Pontius et al. (2008): components A (misses), B (hits), C (wrong-category), D (false alarms), plus Quantity and Allocation Disagreement.
-  - Loaded `configs/scenarios.yaml` dynamically in `pipeline.py` and `markov.py` and computed projection steps from `cfg.projection_years` and temporal intervals with documented stationarity assumption.
-  - Implemented 5-seed validation in Phase 5 reporting mean and std of FoM, $K_{\text{location}}$, $K_{\text{quantity}}$, Quantity Disagreement, and Allocation Disagreement to `metrics/simulation.json`.
-- **Tests Added:** `tests/test_ca.py` (`test_ca_exact_area_allocation_small_grid`, `test_multi_seed_simulation_reports_mean_and_std`), `tests/test_metrics.py` (`test_pontius_figure_of_merit_hand_worked_example`).
-
-## Task 7: Google Earth Engine Integration Honesty & Error Handling
-- **Files Modified/Created:**
-  - `src/greenplan/gee/landsat.py`: Updated `get_landsat_collection_id(year)` to map `<= 2011` to Landsat 5 TM (`LT05`), `2012` to Landsat 7 ETM+ (`LE07`), `2013-2021` to Landsat 8 (`LC08`), and `>= 2022` to Landsat 9 (`LC09`).
-  - `src/greenplan/gee/landsat.py`: `fetch_scene_metadata()` returns `None` for uncatalogued regions or missing epochs, eliminating fabricated `LANDSAT_{yr}_VERIFIED` fallback dictionaries.
-  - `src/greenplan/gee/landsat.py`: `query_live_landsat_scene()` and `predict_location_gee()` return explicit `success: False` / `live: False` with authentication instructions when Earth Engine is unauthenticated or queries fail, completely eliminating hash-based pseudo-random data fabrication.
-  - `src/greenplan/gee_presets.json`: Removed all hardcoded GCP project IDs and expired signed tile URLs (`tiles: {}`).
-  - `src/greenplan/viewer.py`: Relabeled "GEE ML Prediction" to "Multi-Spectral Index Threshold Analysis (NDVI/NDBI/MNDWI)", documented exact spectral indices and classification thresholds used, and added explicit frontend error display on authentication failure.
-  - `scripts/verify_catalog.py`: Script to verify all catalogued USGS scene IDs against Earth Engine when authenticated and flag missing or inaccessible assets.
-- **Tests Added:** `tests/test_gee.py` (`test_get_landsat_collection_id_epochs`, `test_fetch_scene_metadata_returns_none_for_uncatalogued`, `test_query_live_landsat_scene_unauthenticated_does_not_fake`, `test_predict_location_gee_unauthenticated_explicit_error`, `test_gee_presets_no_expired_urls_or_hardcoded_projects`).
-
-## Task 8: CLI Subcommands Cleanup, Unused Config Wiring & CI Workflow
-- **Files Modified/Created:**
-  - `src/greenplan/cli.py`: Cleaned the Typer CLI to expose only functional, production-ready commands (`validate_config`, `run`, `verify_gee`, `serve`), removing dummy placeholder subcommands (`imagery`, `classify`, `drivers`, `thermal`, `simulate`, `plan`); ensured `--synthetic` defaults to `False` requiring explicit opt-in.
-  - `src/greenplan/classification/random_forest.py` & `src/greenplan/pipeline.py`: Wired `min_samples_split=cfg.rf_min_split` into `train_and_evaluate_rf()` and `RandomForestClassifier`.
-  - `pyproject.toml`: Verified Python constraint (`requires-python = ">=3.11"`) and Ruff lint target (`target-version = "py311"`) are aligned.
-  - `.github/workflows/ci.yml`: Created automated GitHub Actions CI workflow running on push and PR to main, testing across Python 3.11 and 3.12 with `uv sync`, `ruff check`, and `pytest tests/ -v`.
-  - `docs/decisions/002_interim_serve_implementation.md`: Documented ADR 002 for the interim `serve` web server implementation and its relationship with the future FastAPI architecture (ADR 001).
-- **Tests Added:** `tests/test_cli.py` (`test_cli_validate_config`, `test_cli_dead_subcommands_removed`, `test_rf_min_split_honored`, `test_ci_workflow_valid_yaml`).
-
----
-
-## [Empirical Landsat Mode for Bhopal & Performance Vectorization]
-
-### 1. Vectorization & Performance Optimizations (Step 3)
-- **Vectorized Confusion Matrix & Cross-Tabulations:** Replaced slow Python `zip` loops with `np.bincount(flat_idx, minlength=k**2).reshape((k, k))` in:
-  - `src/greenplan/validation/metrics.py` (`compute_confusion_matrix`, `compute_figure_of_merit` Pontius Kappa calculations).
-  - `src/greenplan/classification/change_analysis.py` (`compute_transition_stats`).
-  - `src/greenplan/simulation/markov.py` (`compute_transition_matrix`).
-- **Vectorized Modal Filter:** Replaced slow generic Python loops in `apply_majority_filter` with vectorized per-class `scipy.ndimage.uniform_filter` and `np.argmax(counts, axis=0)`.
-- **Chunked Prediction & Subsampling:** Added `predict_raster_chunks` in `src/greenplan/classification/random_forest.py` and stratified subsampling (`max_train_samples=50000`) to prevent memory spikes on million-cell rasters.
-- **Safety & Coarse Resolution:** Added `--max-pixels` validation and `working_pixel_size_m` block-aggregation support in `src/greenplan/pipeline.py` and `src/greenplan/cli.py`.
-
-### 2. Empirical Dataset Exporter & Builder (Steps 1 & 2)
-- **GEE Composites Exporter (`scripts/export_gee_composites.py`):** Cloud-masked median composites over dry season for 2000, 2010 (Landsat 5 TM with Roy et al. 2016 harmonization), and 2020 (Landsat 8 OLI + ST_B10 thermal). Included ESA WorldCover 2020 (`ESA/WorldCover/v100`, band `Map`) aligned at 30m in EPSG:32643.
-- **Empirical Dataset Builder (`scripts/build_empirical_dataset.py`):**
-  - Remaps WorldCover codes using `configs/worldcover_mapping.yaml`.
-  - Computes 9 spectral features (Blue, Green, Red, NIR, SWIR1, SWIR2, NDVI, NDBI, MNDWI; no thermal or EBBI in classifier).
-  - Trains honest Random Forest against independent WorldCover reference using 4-fold spatial-block CV.
-  - Predicts full rasters for 2000, 2010, 2020 with vectorized majority filter.
-  - Performs multi-temporal sanity audit on implausible urban reversal transitions, with optional `--enforce-builtup-persistence` flag.
-  - Generates 3-panel quick-look verification figure `quicklook.png`.
-
-### 3. Empirical Pipeline Reporting & Inspection (Steps 4 & 5)
-- **Non-Circularity:** In empirical mode, pipeline loads independent proxy reference metrics (`accuracy_reference.json`) and calculates Olofsson area-adjusted accuracy against `reference_2020.npy` instead of circularly retraining on labels produced from the same spectral bands.
-- **Data Contract & Viewer:** Updated `docs/data_contract.md`, `src/greenplan/api/schemas.py`, and `src/greenplan/viewer.py` to display `"EMPIRICAL (proxy reference)"` vs `"SYNTHETIC DEMO"`, and report exact accuracy reference descriptions in `summary.json`.
-- **Run Inspector (`scripts/check_run.py`):** CLI utility printing structured peer-review audit tables for any run directory.
-- **Assumptions Made:**
-  - Grassland/shrubland mapped to Green Space (1); wetland mapped to Water (3).
-  - Landsat 5 TM reflectance harmonized using Roy et al. (2016) ETM+ to OLI coefficients as standard approximation.
-  - ESA WorldCover 2020 treated as an independent proxy reference layer rather than absolute ground truth.
----
+# GreenPlan Architecture Changelog
 
 ## [Real-Data Earth Engine Rebuild: Phases 0-8]
 
-### Phase 0: Branch Setup & Zero-Synthetic Purge
+### Phase 0: Branch Setup & Legacy Purge
 - Setup branch `rebuild/real-gis` and backed up repository on `backup/main-before-rebuild`.
-- Purged all synthetic landscape generation code, fake seeds, and synthetic CLI switches.
+- Purged legacy landscape simulation code, fake seeds, and obsolete CLI switches.
 - Ported pure spatial algorithms (CA, Markov, suitability, metrics, thermal regression, decision matrix).
 - Configured region-level settings in `configs/region.yaml` (Madhya Pradesh, GAUL boundary, 7 checkpoints: 2000, 2004, 2008, 2012, 2016, 2020, 2025).
 
@@ -147,21 +21,23 @@
 
 ### Phase 3: Live Input Pipeline & Persistence Filtering
 - Implemented `src/greenplan/io/live_inputs.py` for dynamic user-selected points within regional boundaries.
-- Computed local UTM CRS projections and pulled multi-epoch classified rasters via `geemap.ee_to_numpy`.
+- Reprojected each epoch onto a fixed planar UTM pixel grid (`crs=utm_crs`, fixed affine `crsTransform` at 30m resolution) and strictly verified equal shapes rather than edge padding.
 - Implemented `builtup_persistence` filtering to eliminate single-epoch classification blips while preserving valid non-built land transitions.
 - Added safe OSM Nominatim reverse geocoding with timeout and offline fallback.
 
 ### Phase 4: Core Analysis Pipeline & Hindcast Validation
 - Rebuilt `src/greenplan/pipeline.py` with unified entrypoint `run_analysis(inputs, run_dir, cfg)`.
-- Implemented adjacent-epoch Markov transitions and CA allocation for 2035 and 2045 projections across 3 scenarios (BAU, Conservation, Infill).
-- Evaluated hindcast against real held-out satellite epochs with Pontius FoM, null model agreement, and quantity/allocation disagreement.
+- Corrected hindcast timescale: estimated adjacent single-step transition matrices (e.g. 4-year steps), averaged them, and applied that single-step matrix to match the 4-year validation step to 2020.
+- Replaced invented validation fallbacks with explicit `{"status": "not_available", "reason": "..."}`.
+- Replaced default AUC with `None`.
+- Implemented CA allocation for 2035 and 2045 projections across 3 scenarios (BAU, Conservation, Infill).
 - Derivated OLS thermal regression, Moran's I on residuals, Getis-Ord Gi* hotspots, and 3x3 bivariate decision matrix.
 - Recorded execution timings for every step in `results.json`.
 - Added CLI command `greenplan analyze`.
 
 ### Phase 5: Frozen Offline Snapshots for Bhopal & Kothri
-- Built `src/greenplan/snapshots.py` with SHA-256 cryptographic verification.
-- Generated and committed verified offline snapshots for **Bhopal** and **Kothri** (VIT Bhopal) with GeoTIFFs, PNG overlays, thumbnails, `inputs.npz`, `results.json`, and `checksums.json`.
+- Built `src/greenplan/snapshots.py` with SHA-256 integrity verification.
+- Generated and committed integrity-checked offline snapshots for **Bhopal** and **Kothri** (VIT Bhopal) with GeoTIFFs, PNG overlays, thumbnails, `inputs.npz`, `results.json`, and `checksums.json`.
 - Added CLI commands `greenplan snapshot create`, `verify`, and `list`.
 
 ### Phase 6: FastAPI REST API
@@ -170,13 +46,11 @@
 
 ### Phase 7: Offline-Capable Leaflet Web UI
 - Built responsive GIS web interface (`static/index.html`, `static/css/styles.css`, `static/js/app.js`).
-- Vendored Leaflet CSS and JS locally for 100% offline operation.
+- Vendored Leaflet CSS and JS locally.
 - Added place picker with instant snapshot buttons and click-to-pick map point.
 - Rendered live spatial overlays, SVG historical NDVI trend charts, CA scenario comparison charts, 3x3 Planning Priority Matrix grid, and methodological disclosure.
 
 ### Phase 8: Benchmarks, Documentation & Final Audit
-- Created `scripts/benchmark.py` measuring disk footprint (~16 MB), SHA-256 verification, load speed (~50 ms), and peak memory (~0.14 MB).
-- Updated `README.md` and `CHANGES.md`.
-- Conducted full code audit verifying zero synthetic generation code in active workflows.
-
-
+- Created `scripts/benchmark.py` measuring disk footprint (~16 MB), SHA-256 verification, raster load time (~220 ms), and real uncompressed raster memory footprint in RAM (~24 MB).
+- Updated `README.md` and documentation to explicitly state all modeling assumptions (irreversibility filter, policy parameterization, Jan–May dry season LST).
+- Verified zero synthetic generation code in active workflows.

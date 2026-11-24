@@ -131,7 +131,9 @@ def create_snapshot(
     shutil.rmtree(staging_dir)
 
     # 4. Save metadata.json
-    checkpoints = inputs.checkpoints or [2000, 2010, 2020]
+    checkpoints = inputs.checkpoints or [2000, 2004, 2008, 2012, 2016, 2020, 2025]
+    cfg_p = Path("configs/region.yaml")
+    config_hash = calculate_file_sha256(cfg_p) if cfg_p.exists() else "no-config"
     meta = {
         "snapshot_id": snapshot_id,
         "name": inputs.place_name or snapshot_id.capitalize(),
@@ -140,6 +142,7 @@ def create_snapshot(
         "radius_km": radius_km,
         "checkpoints": checkpoints,
         "crs": inputs.crs,
+        "config_hash": config_hash,
         "headline": summary.model_dump(),
         "thumbnail_file": "thumbnail.png",
     }

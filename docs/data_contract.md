@@ -4,10 +4,10 @@ This document defines the schema and file specifications required for empirical 
 
 ## 1. Directory Structure
 
-Each regional study area must be located under `data/satellite/{city_slug}/` (e.g., `data/satellite/bhopal/`):
+Each regional study area must be located under `data/satellite/{area_slug}/` (e.g., `data/satellite/bhopal/`):
 
 ```text
-data/satellite/{city_slug}/
+data/satellite/{area_slug}/
 ├── lulc_2000.npy               # Classified LULC raster for epoch 2000 (uint8)
 ├── lulc_2010.npy               # Classified LULC raster for epoch 2010 (uint8)
 ├── lulc_2020.npy               # Classified LULC raster for epoch 2020 (uint8)
@@ -26,7 +26,7 @@ To prevent circular evaluation (training and validating a classifier on features
 2. **Honest Accuracy Reporting**: Random Forest cross-validation is evaluated strictly against the independent WorldCover proxy reference with 4-fold spatial-block CV.
 3. **Labels**: Accuracy metrics and the dashboard state `"reference": "ESA WorldCover 2020 (proxy reference)"`, never claiming ground truth.
 
-## 2. Array Specifications
+## 3. Array Specifications
 
 ### LULC Rasters (`lulc_{epoch}.npy`)
 * **Format:** 2D NumPy array of shape `(H, W)`.
@@ -60,7 +60,7 @@ A compressed `.npz` archive containing 5 aligned 2D floating-point arrays of sha
 }
 ```
 
-## 3. Ingestion Behavior
-* When all contract files exist in `data/satellite/{city}/`, `greenplan` automatically ingests them and sets `data_source: "empirical_satellite_data"`.
-* If files are partially missing, the pipeline raises an explicit `ValueError` identifying the missing files.
-* If no local files exist, running with `--synthetic` executes synthetic landscape simulation tagged with `data_source: "synthetic_scaffold_testing"`.
+## 4. Ingestion Behavior
+* When all contract files exist in `data/satellite/{area_slug}/`, `greenplan` automatically ingests them and sets `data_source: "empirical_satellite_data"`.
+* If files are missing or incomplete, the pipeline raises an explicit `FileNotFoundError` or `ValueError` stating the required files.
+* Under the real-data mandate, all runs must use verified satellite observations, live Earth Engine ingestion, or verified offline snapshots.

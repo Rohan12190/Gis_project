@@ -39,17 +39,42 @@ CLASS_NAMES: Dict[int, str] = {
 }
 
 
-def load_worldcover_remapping(mapping_path: Path | str = "configs/worldcover_mapping.yaml") -> Dict[int, int]:
-    """Load ESA WorldCover to GreenPlan 5-class remapping table."""
-    p = Path(mapping_path)
+def load_worldcover_mapping(config_path: Path | str = "configs/worldcover_mapping.yaml") -> Tuple[Dict[int, int], int]:
+    """Load ESA WorldCover to GreenPlan class remapping dictionary from YAML."""
+    p = Path(config_path)
     if not p.exists():
-        raise FileNotFoundError(f"WorldCover mapping file not found at: {p}")
+        mapping = {
+            10: 1, 20: 1, 30: 1, 95: 1,
+            40: 2,
+            50: 0,
+            60: 4, 70: 4, 100: 4,
+            80: 3, 90: 3,
+        }
+        return mapping, -1
 
     with open(p, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
 
-    raw_mapping = data.get("worldcover_mapping", {})
-    return {int(k): int(v) for k, v in raw_mapping.items()}
+    raw_mapping = cfg.get("worldcover_mapping", {})
+    mapping = {int(k): int(v) for k, v in raw_mapping.items()}
+    default_unmapped = int(cfg.get("default_unmapped", -1))
+    return mapping, default_unmapped
+
+
+def load_worldcover_remapping(mapping_path: Path | str = "configs/worldcover_mapping.yaml") -> Dict[int, int]:
+    """Load ESA WorldCover to GreenPlan 5-class remapping table."""
+    mapping, _ = load_worldcover_mapping(mapping_path)
+    return mapping
+
+
+def remap_worldcover(
+    raw_array: np.ndarray, mapping: Dict[int, int], default_val: int = -1
+) -> np.ndarray:
+    """Remap raw ESA WorldCover pixel values to GreenPlan class IDs (0..4)."""
+    remapped = np.full(raw_array.shape, default_val, dtype=np.int8)
+    for src_code, dst_class in mapping.items():
+        remapped[raw_array == src_code] = dst_class
+    return remapped
 
 
 def sample_training_points_gee(

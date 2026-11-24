@@ -68,10 +68,18 @@ function initMap() {
   }).setView([23.25, 77.41], 7);
 
   // OpenStreetMap basemap tile layer (free and open; zero API key required)
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  const baseTiles = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   }).addTo(state.map);
+
+  // If network is offline and basemap tiles fail to load, note gracefully
+  baseTiles.on("tileerror", function () {
+    const badge = document.getElementById("status-badge");
+    if (badge && !state.isOnline) {
+      badge.title = "Internet disconnected: snapshot overlays active, basemap tiles unavailable";
+    }
+  });
 
   // Map Click Listener
   state.map.on("click", (e) => {
@@ -254,7 +262,10 @@ function renderResults(data) {
   const t = data.timings || {};
   document.getElementById("meta-overall-acc").textContent = `${((acc.overall_accuracy || 0) * 100).toFixed(1)}%`;
   document.getElementById("meta-kappa").textContent = (acc.kappa || 0).toFixed(3);
-  document.getElementById("meta-fom").textContent = (data.hindcast_validation?.figure_of_merit || 0).toFixed(3);
+  const fomVal = data.hindcast_validation?.figure_of_merit;
+  document.getElementById("meta-fom").textContent = (fomVal !== null && fomVal !== undefined && typeof fomVal === "number")
+    ? fomVal.toFixed(3)
+    : "Not available";
   document.getElementById("meta-timing-total").textContent = `${(t.total_seconds || 0).toFixed(1)}s`;
 }
 
