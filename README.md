@@ -13,7 +13,7 @@ GreenPlan is an empirical, satellite-derived remote sensing and spatial modeling
 
 ## Region of Interest
 - **Target Region:** Madhya Pradesh, India (`configs/region.yaml`, asset `FAO/GAUL/2015/level1`).
-- **Dynamic Extent:** Fully place-agnostic within the regional boundary. Users can click any location inside the state or specify latitude, longitude, and an analysis buffer radius (5 to 25 km).
+- **Dynamic Extent:** Fully place-agnostic within the regional boundary. Users can click any location inside the state or specify latitude, longitude, and an analysis buffer radius (1 to 25 km; default 10 km).
 - **Default Checkpoints:** `[2000, 2004, 2008, 2012, 2016, 2020, 2025]`.
 
 ---
@@ -44,6 +44,8 @@ GreenPlan is an empirical, satellite-derived remote sensing and spatial modeling
 │                         GreenPlan Core Engine                           │
 │  - Built-up Temporal Persistence Filter                                │
 │  - Spatial-Block Cross-Validation (Honest RF, no circular training)    │
+│  - 512x512 Tiled UTM Raster Extraction (supports up to 25 km radius)   │
+│  - Held-Out Out-of-Sample Hindcast (separate 2000->2016 suitability)   │
 │  - Adjacent-Epoch Markov Matrix Scaling & CA Allocation                │
 │  - OLS Thermal Regression & Getis-Ord Gi* Hotspot Statistics           │
 │  - 3x3 Loss Risk vs. Thermal Stress Decision Matrix                    │
@@ -63,7 +65,8 @@ GreenPlan is an empirical, satellite-derived remote sensing and spatial modeling
 │                        Interactive Leaflet Web UI                       │
 │  - Vendored Leaflet CSS/JS (No CDN dependencies)                       │
 │  - Snapshot rasters & overlays load 100% locally from disk             │
-│  - Map basemap tiles stream OpenStreetMap (zero API keys required)     │
+│  - Map basemap defaults to Satellite View (Esri World Imagery) with     │
+│    an OpenStreetMap Street View toggle (zero API keys required)        │
 │  - Real-time Spatial Overlays (LULC, Thermal Hotspots, Decision Grid)  │
 │  - SVG Trend Charts & 3x3 Planning Priority Matrix                     │
 └────────────────────────────────────────────────────────────────────────┘
@@ -106,29 +109,29 @@ echo "EE_PROJECT_ID=your-project-id" > .env
 
 ```bash
 # 1. Validate configuration files
-uv run python -m greenplan.cli validate-config
+uv run greenplan validate-config
 
 # 2. Train or benchmark the regional classifier against ESA WorldCover 2020
-uv run python -m greenplan.cli train-model --n-samples 2000
+uv run greenplan train-model
 
 # 3. Run satellite analysis for a custom point in Madhya Pradesh
-uv run python -m greenplan.cli analyze --lat 23.25 --lon 77.41 --radius 15 --name Bhopal
+uv run greenplan analyze --lat 23.25 --lon 77.41 --radius 15 --name Bhopal
 
 # 4. Manage offline snapshots
-uv run python -m greenplan.cli snapshot list
-uv run python -m greenplan.cli snapshot verify
-uv run python -m greenplan.cli snapshot create --id sehore --lat 23.20 --lon 77.08 --radius 10
+uv run greenplan snapshot list
+uv run greenplan snapshot verify
+uv run greenplan snapshot create --id sehore --lat 23.20 --lon 77.08 --radius 10
 
 # 5. Launch the FastAPI server and interactive web UI
-uv run python -m greenplan.cli serve --host 0.0.0.0 --port 8000
+uv run greenplan serve --host 0.0.0.0 --port 8000
 ```
 
 ---
 
 ## Web Dashboard & REST API
-Run `uv run python -m greenplan.cli serve` and open [http://localhost:8000](http://localhost:8000).
+Run `uv run greenplan serve` and open [http://localhost:8000](http://localhost:8000).
 
-- **Map Viewer:** Interactive Leaflet interface with boundary of Madhya Pradesh.
+- **Map Viewer:** Interactive Leaflet interface with Esri World Imagery satellite basemap (default), OpenStreetMap street-view toggle, and the Madhya Pradesh state boundary.
 - **Instant Snapshots:** One-click loading of Bhopal and Kothri offline data (~220 ms load time).
 - **Point-and-Click Analysis:** Click anywhere within MP to queue a live Earth Engine run.
 - **Overlay Toggles:** Baseline LULC, Recent LULC, Urban Expansion, Thermal Hotspots, and 3x3 Planning Matrix.
